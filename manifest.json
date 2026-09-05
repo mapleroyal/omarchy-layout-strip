@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.mapleroyal.layout-strip",
+  "name": "Layout Strip",
+  "version": "1.0.0",
+  "author": "mapleroyal",
+  "description": "App icons and column widths for Hyprland's scrolling workspace.",
+  "kinds": ["bar-widget"],
+  "entryPoints": {"barWidget": "BarWidget.qml"},
+  "barWidget": {
+    "displayName": "Layout Strip",
+    "category": "Window management",
+    "defaultSection": "left",
+    "allowMultiple": false
+  }
+}
