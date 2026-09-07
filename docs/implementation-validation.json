@@ -1,6 +1,5 @@
 {
   "date": "2026-09-07",
-  "installedVersion": "1.2.0",
   "benchmark": {
     "before": {
       "route": "helper",
@@ -264,5 +263,12 @@
     "QML input tests use offscreen QtQuick with a popup wrapper; physical touchpad inertia and popup stacking were not exercised end to end.",
     "Two-output native tests use private Hyprland with a test-only Aquamarine protocol-negotiation patch; see native-validation.md.",
     "Vertical bars, full keyboard traversal of tiles and individual stacked members remain outside the current feature set."
-  ]
+  ],
+  "packageVersion": "1.0.0",
+  "publicationChecks": {
+    "pythonTests": 21,
+    "installerTests": 9,
+    "serviceIdentityTests": 2,
+    "rootAndComponentManifestsValid": true
+  }
 }

@@ -1,6 +1,6 @@
 # Scrolling layout strip
 
-Installed component of Layout Strip 1.2.0. The maintained source, installer,
+Installed component of Layout Strip 1.0.0. The maintained source, installer,
 backend, and complete test suite are in the source repository.
 
 Hover an icon for its window title. There are no thumbnail/video previews.

@@ -167,7 +167,7 @@ class Installation(unittest.TestCase):
             self.assertEqual((widget/'custom-link').readlink(),custom_target)
             self.assertEqual(custom_target.read_text(),'external custom')
             self.assertEqual((config/'omarchy/shell.json').read_text(),'{"keep":"my settings"}')
-            self.assertEqual(json.loads((widget/'manifest.json').read_text())['version'],'1.2.0')
+            self.assertEqual(json.loads((widget/'manifest.json').read_text())['version'],'1.0.0')
             self.assertEqual(json.loads((widget/'manifest.json').read_text())['id'],installer.LOCAL_PLUGIN_ID)
             self.assertTrue((binary/'hypr-tape-doctor').stat().st_mode & 0o111)
             self.assertTrue((data/'hypr-tape/BarRegionRegistry.hpp').is_file())

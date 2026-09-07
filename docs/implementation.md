@@ -1,4 +1,4 @@
-# Layout Strip 1.2.0 — implemented and installed
+# Layout Strip — implementation and validation
 
 Completed 7 September 2026. The updated widget, shared Lua backend and matching native bridge are running in the desktop. The health check reports **healthy**, frontend/backend/native protocol **2**, and all required host capabilities. Hyprland reports no configuration errors.
 
@@ -15,7 +15,7 @@ Completed 7 September 2026. The updated widget, shared Lua backend and matching 
 | Omarchy integration | A host adapter owns width measurement, settings, placement and forwarded clicks. Repeated neighbor IDs are matched by instance. Shared webapp identity lookup fixes the Discord icon and follows theme changes. |
 | Maintenance | One source repository now contains the widget, backend, native bridge, installer and tests. A narrow bootstrap preserves existing keyboard/gesture controls. Version checks, all-monitor diagnostics, a health command and rollback backups are included. |
 
-Your `shell.json`, selected tape mode, appearance choices and unrelated bindings were preserved. The installed 31 managed source files match the maintained source; the bindings file differs only by the recognized bootstrap migration.
+Your `shell.json`, selected tape mode, appearance choices and unrelated bindings were preserved. The installed 31 managed source files match the maintained source; the bindings file differs only by the recognized bootstrap configuration.
 
 The updated bar was visually checked after installation:
 
@@ -54,7 +54,8 @@ Physical touchpad inertia and compositor popup stacking remain outside the offsc
 
 Start with the [source README](../README.md), [changelog](../CHANGELOG.md), and [machine-readable validation](implementation-validation.json). Run `hypr-tape-doctor` for a read-only live health check; `omarchy shell user1.layout-strip debug` reports every monitor instance.
 
-On these Omarchy/Qt versions, plugin rescan retained the old component/directory cache and initially failed to discover the new service. `omarchy restart shell` loaded the complete release successfully. The documented installation procedure now includes this step for new QML components. The compositor stayed running.
+The shell was restarted to load the complete QML component set; Hyprland stayed
+running. The documented setup includes this step and a live health check.
 
 The previous installed files and native activation manifest are backed up at:
 

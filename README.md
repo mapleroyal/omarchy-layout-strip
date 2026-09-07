@@ -1,4 +1,4 @@
-# Layout Strip 1.2
+# Layout Strip v1
 
 The maintained source for the `io.github.mapleroyal.layout-strip` Omarchy bar
 plugin, its existing `user1.layout-strip` personal alias, and their shared
@@ -6,7 +6,7 @@ Hyprland scrolling backend. The native backend also supports the
 existing keyboard and gesture navigation; removing the bar widget does not
 remove that shared dependency.
 
-See the [1.2.0 implementation and validation report](docs/implementation.md)
+See the [implementation and validation report](docs/implementation.md)
 for completed fixes, measurements and installation results.
 
 An icon represents one tiled column in the displayed workspace. Hover shows
@@ -51,7 +51,7 @@ The service keeps only the latest queued focus request. Close and reorder are
 never automatically retried or queued. A visible status mark reports unavailable
 or stale backend data; hover it for the reason and click to retry a state read.
 
-## Install or update
+## Install
 
 Required: Omarchy's Quickshell shell, Lua-enabled Hyprland scrolling layout,
 Python 3 for installation/tools, and the matching Hyprland/Lua development headers,
@@ -71,26 +71,8 @@ omarchy restart shell
 hypr-tape-doctor
 ```
 
-**Upgrading from 1.0 requires the backend installation step.** Omarchy clones
-and enables the plugin, but does not execute install hooks. This release uses
-a persistent shared Lua/native backend instead of loading Lua through Python
-on each read. Until the matching backend is installed, the widget reports that
-it is unavailable.
-
-If you enabled 1.0's optional native bridge, remove its old `hl.plugin.load(...)`
-line pointing to `omarchy-layout-strip/native/tape.so` from your Hyprland config
-before running the new installer. The new versioned loader owns native activation;
-the old and new declarations should not be loaded together. Existing installations
-already managed through `hypr-tape/active.lua` are preserved by the installer.
-
-For later updates:
-
-```sh
-omarchy plugin update io.github.mapleroyal.layout-strip
-python3 "$HOME/.config/omarchy/plugins/io.github.mapleroyal.layout-strip/install.py" --apply --plugin-id io.github.mapleroyal.layout-strip
-omarchy restart shell
-hypr-tape-doctor
-```
+Omarchy installs the plugin files but does not execute install hooks. The backend
+installation step above provides the shared Lua/native integration.
 
 From a separate development checkout, or for an existing personal installation:
 
@@ -103,18 +85,14 @@ hypr-tape-doctor                         # read-only health check
 ```
 
 The installer preserves `shell.json`, existing width/appearance/arrow choices,
-the selected tape mode and unrelated user keybindings. It migrates only recognized
-old integration blocks, or adds a narrow bootstrap on a clean installation.
-Unexpected existing integration is refused instead of overwriting personal code.
+the selected tape mode and unrelated user keybindings. It configures a narrow
+bootstrap for the shared backend and backs up managed files before replacement.
 The printed backup contains prior files and their paths. Without `--plugin-id`,
 the installer preserves an existing `user1.layout-strip` installation; otherwise
 it selects the public ID. The public package keeps its nested `plugin/` entry
 points so installing from an Omarchy Git checkout leaves that checkout clean.
 
-Restart the shell after installing a release with new QML components. On the
-tested Omarchy/Qt versions, a plugin rescan retained the old directory/component
-cache and reported a misleading `File name case mismatch` for the new service.
-The supported shell restart loads the complete release; Hyprland stays running.
+Restart the shell to load the installed QML components. Hyprland stays running.
 The doctor verifies the active service as well as the Lua/native backend.
 
 For a personal alias created from a separate checkout, enable that alias:
@@ -129,7 +107,7 @@ For staging into isolated directories, `--config-home`, `--data-home`, `--bin-di
 and `--skip-native-build` are available. The last option intentionally leaves native
 activation to a later rebuild; it is not needed for a normal install.
 
-## Diagnostics and upgrades
+## Diagnostics
 
 ```sh
 omarchy shell io.github.mapleroyal.layout-strip debug
@@ -175,7 +153,7 @@ with your monitor name. The benchmark reports child-process CPU, not whole-shell
 CPU or battery consumption.
 
 See [host integration](docs/host-integration.md), [Lua adapter](backend/README.md),
-[native API and upgrade safety](native/README.md), and [QML test scope](tests/qml/README.md).
+[native API and build safety](native/README.md), and [QML test scope](tests/qml/README.md).
 
 ## License
 

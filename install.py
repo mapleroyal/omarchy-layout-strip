@@ -181,7 +181,7 @@ def main():
         if staging.exists(): shutil.rmtree(staging)
         # Never discard the recovery tree if publication or restoration failed.
         if committed and held.exists(): shutil.rmtree(held)
-    print('Installed Layout Strip 1.2.0. Backup: '+str(backup))
+    print('Installed Layout Strip 1.0.0. Backup: '+str(backup))
     if not args.skip_native_build:
         print('Run omarchy restart shell to load new QML components, then hypr-tape-doctor to verify the active plugin.')
 

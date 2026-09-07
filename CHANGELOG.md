@@ -1,4 +1,4 @@
-# 1.2.0
+# v1.0.0 — initial release
 
 - Retain address-keyed icon delegates across metadata updates and column moves.
 - Preserve wheel/arrow animations across unrelated refreshes and expose backend errors.
@@ -10,5 +10,5 @@
 - Address native snapshots and scrolling adjustments by workspace without changing focus.
 - Repair closes under floating focus and across monitors; invalidate stale deferred repairs.
 - Add protocol/native capability checks, all-monitor diagnostics and a read-only doctor.
-- Consolidate source, installation, backups, migration and regression tests into one repository.
-- Preserve the published plugin identity and existing personal alias, including clean Git-managed public updates and identity-aware diagnostics.
+- Consolidate source, installation, backups and regression tests into one repository.
+- Support the package identity and personal alias, including clean Git-managed public updates and identity-aware diagnostics.
