@@ -11,3 +11,4 @@
 - Repair closes under floating focus and across monitors; invalidate stale deferred repairs.
 - Add protocol/native capability checks, all-monitor diagnostics and a read-only doctor.
 - Consolidate source, installation, backups, migration and regression tests into one repository.
+- Preserve the published plugin identity and existing personal alias, including clean Git-managed public updates and identity-aware diagnostics.

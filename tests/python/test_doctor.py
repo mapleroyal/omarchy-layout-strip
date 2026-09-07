@@ -28,7 +28,7 @@ class Doctor(unittest.TestCase):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text('{}')
         self.settings = self.config/'omarchy/shell.json'
-        self.settings.write_text(json.dumps({'bar': {'layout': {'left': [{'id': doctor.PLUGIN_ID}]}}}))
+        self.settings.write_text(json.dumps({'bar': {'layout': {'left': [{'id': doctor.LOCAL_PLUGIN_ID}]}}}))
         self.calls = []
         self.debug = {'protocolVersion': 2, 'backendError': '', 'regionError': '',
                       'instances': [{'monitorName': 'HEADLESS-1', 'workspaceId': 1,
@@ -55,16 +55,42 @@ class Doctor(unittest.TestCase):
         self.assertTrue(result['ok'], result)
         self.assertEqual(result['shell']['status'], 'active')
         self.assertEqual(self.calls[1][0], str(Path(self.temporary.name)/'custom-bin/hypr-tape-bar'))
-        self.assertEqual(self.calls[2], ['omarchy', 'shell', doctor.PLUGIN_ID, 'debug'])
+        self.assertEqual(self.calls[2], ['omarchy', 'shell', doctor.LOCAL_PLUGIN_ID, 'debug'])
+
+    def test_public_alias_preferred_when_configured(self):
+        manifest = self.config/'omarchy/plugins'/doctor.PUBLIC_PLUGIN_ID/'manifest.json'
+        manifest.parent.mkdir(parents=True)
+        manifest.write_text('{}')
+        self.settings.write_text(json.dumps({'bar': {'layout': {'right': [doctor.PUBLIC_PLUGIN_ID]}}}))
+        result = self.health()
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['shell']['pluginId'], doctor.PUBLIC_PLUGIN_ID)
+        self.assertEqual(self.calls[-1], ['omarchy', 'shell', doctor.PUBLIC_PLUGIN_ID, 'debug'])
+
+    def test_public_only_disabled_install_is_discovered(self):
+        local = self.config/'omarchy/plugins'/doctor.LOCAL_PLUGIN_ID
+        local.rename(local.with_name(doctor.PUBLIC_PLUGIN_ID))
+        self.settings.write_text('{}')
+        result = self.health()
+        self.assertTrue(result['ok'], result)
+        self.assertEqual(result['shell'], {'enabled': False, 'status': 'disabled',
+                                           'pluginId': doctor.PUBLIC_PLUGIN_ID})
+
+    def test_configured_missing_alias_reports_missing_install(self):
+        self.settings.write_text(json.dumps({'bar': {'layout': {'right': [doctor.PUBLIC_PLUGIN_ID]}}}))
+        result = self.health()
+        self.assertFalse(result['ok'])
+        self.assertTrue(any(doctor.PUBLIC_PLUGIN_ID+'/manifest.json' in error for error in result['errors']))
 
     def test_disabled_shell_is_explicit_and_skips_ipc(self):
-        for settings in ({}, {'bar': {'layout': {'left': [doctor.PLUGIN_ID]}},
-                             'disabledPlugins': [doctor.PLUGIN_ID]}):
+        for settings in ({}, {'bar': {'layout': {'left': [doctor.LOCAL_PLUGIN_ID]}},
+                             'disabledPlugins': [doctor.LOCAL_PLUGIN_ID]}):
             self.calls.clear()
             self.settings.write_text(json.dumps(settings))
             result = self.health()
             self.assertTrue(result['ok'], result)
-            self.assertEqual(result['shell'], {'enabled': False, 'status': 'disabled'})
+            self.assertEqual(result['shell'], {'enabled': False, 'status': 'disabled',
+                                               'pluginId': doctor.LOCAL_PLUGIN_ID})
             self.assertFalse(any(call[0] == 'omarchy' for call in self.calls))
 
     def test_enabled_missing_service_fails_health(self):
@@ -93,7 +119,7 @@ class Doctor(unittest.TestCase):
         result = self.health()
         self.assertFalse(result['ok'])
         self.assertEqual(result['shell']['status'], 'configuration-error')
-        self.settings.write_text(json.dumps({'bar': {'layout': {'left': [doctor.PLUGIN_ID]}}}))
+        self.settings.write_text(json.dumps({'bar': {'layout': {'left': [doctor.LOCAL_PLUGIN_ID]}}}))
         self.debug = []
         result = self.health()
         self.assertFalse(result['ok'])

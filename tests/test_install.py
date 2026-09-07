@@ -3,6 +3,7 @@
 import importlib.util
 import json
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -15,6 +16,58 @@ installer=importlib.util.module_from_spec(spec)
 spec.loader.exec_module(installer)
 
 class Installation(unittest.TestCase):
+    def test_new_install_defaults_to_public_nested_layout(self):
+        with tempfile.TemporaryDirectory(prefix='strip-public-install-') as path:
+            base=Path(path); config=base/'config'; widget=config/'omarchy/plugins'/installer.PUBLIC_PLUGIN_ID
+            command=[sys.executable,str(ROOT/'install.py'),'--apply','--skip-native-build',
+                     '--config-home',str(config),'--data-home',str(base/'data'),'--bin-dir',str(base/'bin')]
+            result=subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            manifest=json.loads((widget/'manifest.json').read_text())
+            self.assertEqual(manifest['id'],installer.PUBLIC_PLUGIN_ID)
+            self.assertEqual(manifest['entryPoints']['service'],'plugin/Service.qml')
+            for entry in manifest['entryPoints'].values(): self.assertTrue((widget/entry).is_file())
+            self.assertFalse((widget.parent/installer.LOCAL_PLUGIN_ID).exists())
+
+    def test_explicit_local_alias_creates_flat_layout(self):
+        with tempfile.TemporaryDirectory(prefix='strip-local-install-') as path:
+            base=Path(path); config=base/'config'; widget=config/'omarchy/plugins'/installer.LOCAL_PLUGIN_ID
+            command=[sys.executable,str(ROOT/'install.py'),'--apply','--skip-native-build',
+                     '--config-home',str(config),'--data-home',str(base/'data'),'--bin-dir',str(base/'bin'),
+                     '--plugin-id',installer.LOCAL_PLUGIN_ID]
+            result=subprocess.run(command,capture_output=True,text=True)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            manifest=json.loads((widget/'manifest.json').read_text())
+            self.assertEqual(manifest['id'],installer.LOCAL_PLUGIN_ID)
+            self.assertEqual(manifest['entryPoints']['service'],'Service.qml')
+            self.assertTrue((widget/'Service.qml').is_file())
+            self.assertFalse((widget/'plugin').exists())
+
+    def test_public_git_source_stays_clean_and_preserves_local_alias(self):
+        with tempfile.TemporaryDirectory(prefix='strip-public-git-') as path:
+            base=Path(path); config=base/'config'; widget=config/'omarchy/plugins'/installer.PUBLIC_PLUGIN_ID
+            shutil.copytree(ROOT,widget,ignore=shutil.ignore_patterns('.git','__pycache__','*.pyc'))
+            local=widget.parent/installer.LOCAL_PLUGIN_ID
+            local.mkdir(); (local/'custom.txt').write_text('keep local installation')
+            settings=config/'omarchy/shell.json'
+            settings.write_text(json.dumps({'bar':{'layout':{'left':[
+                {'id':installer.PUBLIC_PLUGIN_ID,'widthRatio':0.63,'arrowMode':'click'}]}}}))
+            original_settings=settings.read_text()
+            # Only this temporary fixture repository is initialized or changed.
+            subprocess.run(['git','init','-q',str(widget)],check=True)
+            subprocess.run(['git','-C',str(widget),'add','.'],check=True)
+            subprocess.run(['git','-C',str(widget),'-c','user.name=Fixture',
+                            '-c','user.email=fixture@example.invalid','commit','-qm','Fixture'],check=True)
+            command=[sys.executable,str(widget/'install.py'),'--apply','--skip-native-build',
+                     '--config-home',str(config),'--data-home',str(base/'data'),'--bin-dir',str(base/'bin'),
+                     '--plugin-id',installer.PUBLIC_PLUGIN_ID]
+            result=subprocess.run(command,capture_output=True,text=True,cwd=base)
+            self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+            status=subprocess.run(['git','-C',str(widget),'status','--porcelain'],check=True,capture_output=True,text=True)
+            self.assertEqual(status.stdout,'',status.stdout)
+            self.assertEqual((local/'custom.txt').read_text(),'keep local installation')
+            self.assertEqual(settings.read_text(),original_settings)
+
     def test_managed_plugin_symlink_refused_before_changes(self):
         with tempfile.TemporaryDirectory(prefix='strip-install-link-') as path:
             base=Path(path); config=base/'config'; data=base/'data'; binary=base/'bin'
@@ -115,6 +168,7 @@ class Installation(unittest.TestCase):
             self.assertEqual(custom_target.read_text(),'external custom')
             self.assertEqual((config/'omarchy/shell.json').read_text(),'{"keep":"my settings"}')
             self.assertEqual(json.loads((widget/'manifest.json').read_text())['version'],'1.2.0')
+            self.assertEqual(json.loads((widget/'manifest.json').read_text())['id'],installer.LOCAL_PLUGIN_ID)
             self.assertTrue((binary/'hypr-tape-doctor').stat().st_mode & 0o111)
             self.assertTrue((data/'hypr-tape/BarRegionRegistry.hpp').is_file())
             records=json.loads((base/'backup-0/files.json').read_text())

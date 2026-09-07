@@ -29,6 +29,7 @@ with tempfile.TemporaryDirectory(prefix='strip-cpp-tests-') as temporary:
         run([compiler,'-std=c++26','-O2','-Wall','-Wextra','-I',ROOT/'native',ROOT/'tests/native'/f'{name}.cpp','-o',executable,*extra])
         run([executable])
 run([sys.executable,'tests/icons/run.py'])
+run([sys.executable,'tests/run_service.py'])
 run([sys.executable,'tests/run_backend.py'])
 run([sys.executable,'tests/qml/run.py'])
 print('All deterministic and offscreen suites passed',flush=True)

@@ -5,7 +5,9 @@ import os
 from pathlib import Path
 import subprocess
 
-PLUGIN_ID = 'user1.layout-strip'
+LOCAL_PLUGIN_ID = 'user1.layout-strip'
+PUBLIC_PLUGIN_ID = 'io.github.mapleroyal.layout-strip'
+PLUGIN_IDS = (LOCAL_PLUGIN_ID, PUBLIC_PLUGIN_ID)
 PROTOCOL_VERSION = 2
 
 
@@ -18,7 +20,10 @@ def json_command(command, runner):
 
 
 def shell_health(config, runner, errors):
-    state = {'enabled': False, 'status': 'disabled'}
+    installed = [plugin_id for plugin_id in PLUGIN_IDS
+                 if (config/'omarchy/plugins'/plugin_id/'manifest.json').is_file()]
+    state = {'enabled': False, 'status': 'disabled',
+             'pluginId': installed[0] if installed else PUBLIC_PLUGIN_ID}
     path = config / 'omarchy/shell.json'
     try:
         settings = json.loads(path.read_text()) if path.exists() else {}
@@ -28,13 +33,16 @@ def shell_health(config, runner, errors):
         layout = bar.get('layout', {}) if isinstance(bar, dict) else {}
         entries = [entry for group in ('left', 'center', 'right')
                    for entry in (layout.get(group, []) if isinstance(layout, dict) else [])]
-        configured = any((entry.get('id') if isinstance(entry, dict) else entry) == PLUGIN_ID
-                         for entry in entries)
-        state['enabled'] = configured and PLUGIN_ID not in settings.get('disabledPlugins', [])
+        configured = [(entry.get('id') if isinstance(entry, dict) else entry) for entry in entries]
+        configured = [plugin_id for plugin_id in configured if plugin_id in PLUGIN_IDS]
+        enabled = [plugin_id for plugin_id in configured if plugin_id not in settings.get('disabledPlugins', [])]
+        if enabled or configured:
+            state['pluginId'] = (enabled or configured)[0]
+        state['enabled'] = bool(enabled)
         if not state['enabled']:
             return state
         state['status'] = 'unavailable'
-        debug = json_command(['omarchy', 'shell', PLUGIN_ID, 'debug'], runner)
+        debug = json_command(['omarchy', 'shell', state['pluginId'], 'debug'], runner)
         issues = []
         if debug.get('protocolVersion') != PROTOCOL_VERSION:
             issues.append('Shell service protocol versions do not match')
@@ -76,8 +84,7 @@ def shell_health(config, runner, errors):
 def health(config, data, runner=None):
     runner = runner or subprocess.run
     errors = []
-    for path in [config/'omarchy/plugins/user1.layout-strip/manifest.json',
-                 config/'hypr/tape-bootstrap.lua', config/'hypr/tape.lua',
+    for path in [config/'hypr/tape-bootstrap.lua', config/'hypr/tape.lua',
                  config/'hypr/tape-bar.lua', config/'hypr/tape-native.lua',
                  data/'hypr-tape/active.lua']:
         if not path.is_file():
@@ -105,6 +112,9 @@ def health(config, data, runner=None):
     except (OSError, ValueError, subprocess.SubprocessError) as error:
         errors.append('Backend: ' + str(error))
     result['shell'] = shell_health(config, runner, errors)
+    manifest_path = config/'omarchy/plugins'/result['shell']['pluginId']/'manifest.json'
+    if not manifest_path.is_file():
+        errors.append('Missing ' + str(manifest_path))
     result['ok'] = not errors
     return result
 

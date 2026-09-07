@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.mapleroyal.layout-strip",
+  "name": "Layout Strip",
+  "version": "1.2.0",
+  "description": "Stable app strip with shared event-driven state, addressed desktop navigation and flexible placement",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "plugin/BarWidget.qml",
+    "service": "plugin/Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Layout Strip",
+    "category": "Window management",
+    "allowMultiple": false,
+    "defaultSection": "left"
+  },
+  "author": "mapleroyal"
+}

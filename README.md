@@ -1,7 +1,8 @@
 # Layout Strip 1.2
 
-The maintained source for the installed `user1.layout-strip` Omarchy bar plugin
-and its shared Hyprland scrolling backend. The native backend also supports the
+The maintained source for the `io.github.mapleroyal.layout-strip` Omarchy bar
+plugin, its existing `user1.layout-strip` personal alias, and their shared
+Hyprland scrolling backend. The native backend also supports the
 existing keyboard and gesture navigation; removing the bar widget does not
 remove that shared dependency.
 
@@ -60,7 +61,38 @@ Tested against Omarchy 4.0.2-1, Quickshell 0.3.1, Qt 6.11.2 and Hyprland 0.56.2.
 Native binaries are tied to the exact compositor commit and full ABI. Update and
 restart Hyprland before rebuilding against newly installed headers.
 
-From this repository:
+Install the published plugin and its shared backend:
+
+```sh
+omarchy plugin add https://github.com/mapleroyal/omarchy-layout-strip.git --enable
+python3 "$HOME/.config/omarchy/plugins/io.github.mapleroyal.layout-strip/install.py" --apply --plugin-id io.github.mapleroyal.layout-strip
+omarchy bar move io.github.mapleroyal.layout-strip --section left --index 9999
+omarchy restart shell
+hypr-tape-doctor
+```
+
+**Upgrading from 1.0 requires the backend installation step.** Omarchy clones
+and enables the plugin, but does not execute install hooks. This release uses
+a persistent shared Lua/native backend instead of loading Lua through Python
+on each read. Until the matching backend is installed, the widget reports that
+it is unavailable.
+
+If you enabled 1.0's optional native bridge, remove its old `hl.plugin.load(...)`
+line pointing to `omarchy-layout-strip/native/tape.so` from your Hyprland config
+before running the new installer. The new versioned loader owns native activation;
+the old and new declarations should not be loaded together. Existing installations
+already managed through `hypr-tape/active.lua` are preserved by the installer.
+
+For later updates:
+
+```sh
+omarchy plugin update io.github.mapleroyal.layout-strip
+python3 "$HOME/.config/omarchy/plugins/io.github.mapleroyal.layout-strip/install.py" --apply --plugin-id io.github.mapleroyal.layout-strip
+omarchy restart shell
+hypr-tape-doctor
+```
+
+From a separate development checkout, or for an existing personal installation:
 
 ```sh
 python3 tests/run.py
@@ -74,7 +106,10 @@ The installer preserves `shell.json`, existing width/appearance/arrow choices,
 the selected tape mode and unrelated user keybindings. It migrates only recognized
 old integration blocks, or adds a narrow bootstrap on a clean installation.
 Unexpected existing integration is refused instead of overwriting personal code.
-The printed backup contains prior files and their paths.
+The printed backup contains prior files and their paths. Without `--plugin-id`,
+the installer preserves an existing `user1.layout-strip` installation; otherwise
+it selects the public ID. The public package keeps its nested `plugin/` entry
+points so installing from an Omarchy Git checkout leaves that checkout clean.
 
 Restart the shell after installing a release with new QML components. On the
 tested Omarchy/Qt versions, a plugin rescan retained the old directory/component
@@ -82,9 +117,10 @@ cache and reported a misleading `File name case mismatch` for the new service.
 The supported shell restart loads the complete release; Hyprland stays running.
 The doctor verifies the active service as well as the Lua/native backend.
 
-For a new installation, enable the widget through Omarchy after installation:
+For a personal alias created from a separate checkout, enable that alias:
 
 ```sh
+python3 install.py --apply --plugin-id user1.layout-strip
 omarchy plugin enable user1.layout-strip
 omarchy bar move user1.layout-strip --section left --index 9999
 ```
@@ -96,8 +132,8 @@ activation to a later rebuild; it is not needed for a normal install.
 ## Diagnostics and upgrades
 
 ```sh
-omarchy shell user1.layout-strip debug
-omarchy shell user1.layout-strip monitor eDP-1
+omarchy shell io.github.mapleroyal.layout-strip debug
+omarchy shell io.github.mapleroyal.layout-strip monitor eDP-1
 hypr-tape-bar snapshot --monitor eDP-1
 hypr-tape-rebuild
 ```
@@ -107,6 +143,9 @@ versions, capabilities, last successful refresh, errors and request counters.
 The RPC protocol is version 2; incompatible frontend/backend installations are
 reported before actions are sent. Missing native features retain ordinary focus
 where possible and disable unsupported operations.
+
+Use `user1.layout-strip` in those IPC commands for the personal alias.
+`hypr-tape-doctor` detects the configured alias automatically.
 
 `hypr-tape-rebuild` builds an immutable versioned library, checks exact headers,
 activates it, verifies the loaded path, and restores the previous manifest if
@@ -137,3 +176,7 @@ CPU or battery consumption.
 
 See [host integration](docs/host-integration.md), [Lua adapter](backend/README.md),
 [native API and upgrade safety](native/README.md), and [QML test scope](tests/qml/README.md).
+
+## License
+
+Plugin code is [MIT licensed](LICENSE). See [dependency and image notices](NOTICE.md).
