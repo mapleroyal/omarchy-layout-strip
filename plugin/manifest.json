@@ -1,0 +1,20 @@
+{
+  "schemaVersion": 1,
+  "id": "user1.layout-strip",
+  "name": "Scrolling layout",
+  "version": "1.2.0",
+  "description": "Stable app strip with shared event-driven state, addressed desktop navigation and flexible placement",
+  "kinds": [
+    "bar-widget",
+    "service"
+  ],
+  "entryPoints": {
+    "barWidget": "BarWidget.qml",
+    "service": "Service.qml"
+  },
+  "barWidget": {
+    "displayName": "Scrolling layout",
+    "category": "Window management",
+    "allowMultiple": false
+  }
+}

@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+build/
+*.so
+*.o
+results.log
+.install-backups/

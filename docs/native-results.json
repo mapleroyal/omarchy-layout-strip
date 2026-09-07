@@ -1,0 +1,47 @@
+[
+  {
+    "case": "protocol_v2_bulk_snapshot",
+    "monitors": 2
+  },
+  {
+    "case": "addressed_pan_nonfocused_monitor",
+    "offset": 714.0
+  },
+  {
+    "case": "close_preserves_anchor",
+    "target": "A",
+    "anchor": "C",
+    "before": 725,
+    "after": 725
+  },
+  {
+    "case": "close_preserves_anchor",
+    "target": "G",
+    "anchor": "C",
+    "before": 725,
+    "after": 725
+  },
+  {
+    "case": "addressed_camera_floating_focus",
+    "offset": 714.0
+  },
+  {
+    "case": "close_preserves_anchor",
+    "target": "B",
+    "anchor": "D",
+    "before": 725,
+    "after": 725
+  },
+  {
+    "case": "addressed_reorder_floating_focus"
+  },
+  {
+    "case": "reorder_invalidates_pending_close"
+  },
+  {
+    "case": "reject_stale_camera_context"
+  },
+  {
+    "case": "retiring_owner_cannot_clear_successor"
+  }
+]

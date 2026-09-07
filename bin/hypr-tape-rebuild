@@ -1,0 +1,125 @@
+#!/usr/bin/env python3
+"""Build a versioned native tape library and activate it with config rollback."""
+import argparse
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import shutil
+import subprocess
+import sys
+import tempfile
+import time
+
+
+def command(args, timeout=20):
+    result = subprocess.run(args, text=True, capture_output=True, timeout=timeout)
+    if result.returncode:
+        raise RuntimeError((result.stderr or result.stdout).strip() or "Command failed: " + args[0])
+    return result.stdout.strip()
+
+
+def atomic_write(path, content):
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".active-", delete=False) as out:
+        temporary = Path(out.name)
+        try:
+            out.write(content)
+            out.flush()
+            os.fsync(out.fileno())
+        except BaseException:
+            temporary.unlink(missing_ok=True)
+            raise
+    try:
+        temporary.chmod(0o644)
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
+
+
+def lua_string(value):
+    return '"' + value.replace("\\", "\\\\").replace('"', '\\"').replace("\n", "\\n").replace("\r", "\\r") + '"'
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--data-dir", type=Path, help="Installation directory (also supports private test installations)")
+    args = parser.parse_args()
+    base = (args.data_dir or Path(os.environ.get("XDG_DATA_HOME", str(Path.home() / ".local/share"))) / "hypr-tape").expanduser().resolve()
+    if not (base / "build.sh").is_file() or not (base / "tape.cpp").is_file():
+        raise RuntimeError("Missing source/build.sh in " + str(base))
+
+    # Prevent two manual rebuilds from replacing one another's manifest.
+    with (base / ".rebuild.lock").open("w") as lock:
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise RuntimeError("Another tape rebuild is already running") from None
+
+        baseline = command(["hyprctl", "configerrors"])
+        if baseline:
+            raise RuntimeError("Fix existing Hyprland configuration errors before rebuilding:\n" + baseline)
+
+        builds = base / "builds"
+        builds.mkdir(exist_ok=True)
+        build_dir = Path(tempfile.mkdtemp(prefix=time.strftime("%Y%m%d-%H%M%S-"), dir=builds))
+        library = build_dir / "tape.so"
+        try:
+            output = command([str(base / "build.sh"), str(library)], timeout=180)
+            print(output)
+            metadata = (build_dir / "build-info.lua").read_text()
+            version_match = re.search(r'version\s*=\s*"([A-Za-z0-9_.+\-]+)"', metadata)
+            hash_match = re.search(r'git_hash\s*=\s*"([0-9a-fA-F]{40})"', metadata)
+            if not version_match or not hash_match:
+                raise RuntimeError("Build did not produce valid version metadata")
+            version, git_hash = version_match.group(1), hash_match.group(1)
+            running = json.loads(command(["hyprctl", "-j", "version"]))
+            if running.get("version") != version or running.get("commit") != git_hash:
+                raise RuntimeError("Installed headers differ from the running Hyprland; restart Hyprland after its update, then rebuild")
+        except BaseException:
+            shutil.rmtree(build_dir)
+            raise
+
+        manifest = base / "active.lua"
+        previous = manifest.read_text() if manifest.exists() else None
+        updated = "-- Selected by hypr-tape-rebuild. Previous builds are retained for rollback.\nreturn { path = " + lua_string(str(library)) + ", version = " + lua_string(version) + ", git_hash = " + lua_string(git_hash) + " }\n"
+        atomic_write(manifest, updated)
+        try:
+            command(["hyprctl", "reload"])
+            # Plugin declarations load after parsing and may cause a second
+            # native config reload. Wait briefly for the actual callback image.
+            deadline = time.monotonic() + 5
+            loaded = ""
+            while time.monotonic() < deadline:
+                loaded = command(["hyprctl", "repl", 'local p = hl.plugin and hl.plugin.tape; return p and p.info and p.info().path or ""'])
+                if loaded == str(library):
+                    break
+                time.sleep(0.1)
+            if loaded != str(library):
+                raise RuntimeError("Hyprland did not load the new tape library (reported " + (loaded or "no bridge") + ")")
+            errors = command(["hyprctl", "configerrors"])
+            if errors:
+                raise RuntimeError("Hyprland configuration errors:\n" + errors)
+        except BaseException as activation_error:
+            try:
+                if previous is None:
+                    manifest.unlink(missing_ok=True)
+                else:
+                    atomic_write(manifest, previous)
+                command(["hyprctl", "reload"])
+                rollback_errors = command(["hyprctl", "configerrors"])
+                if rollback_errors:
+                    raise RuntimeError(rollback_errors)
+            except BaseException as rollback_error:
+                raise RuntimeError(f"Activation failed: {activation_error}\nRollback also failed: {rollback_error}") from None
+            raise RuntimeError(f"Activation failed and the previous manifest was restored: {activation_error}") from None
+
+        print("Native tape bridge rebuilt and loaded: " + str(library))
+
+
+if __name__ == "__main__":
+    try:
+        main()
+    except (OSError, RuntimeError, ValueError, subprocess.TimeoutExpired) as error:
+        print("hypr-tape-rebuild: " + str(error), file=sys.stderr)
+        raise SystemExit(1)

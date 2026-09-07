@@ -1,0 +1,40 @@
+#!/usr/bin/env python3
+"""Select tape browsing behavior; Hyprland owns all movement animations."""
+import os
+from pathlib import Path
+import re
+import subprocess
+import sys
+import tempfile
+
+path = Path(os.environ.get("XDG_CONFIG_HOME", str(Path.home() / ".config"))) / "hypr/tape-mode.lua"
+old = path.read_text() if path.exists() else 'return "smooth"\n'
+match = re.search(r'return\s+[\"\'](smooth|columns)[\"\']', old)
+current = match.group(1) if match else "smooth"
+action = sys.argv[1] if len(sys.argv) > 1 else "status"
+if action == "status":
+    print(current)
+    raise SystemExit(0)
+if action == "toggle":
+    action = "columns" if current == "smooth" else "smooth"
+if action not in ("smooth", "columns"):
+    raise SystemExit("Usage: hypr-tape-mode [status|smooth|columns|toggle]")
+
+def write_atomic(text):
+    with tempfile.NamedTemporaryFile(mode="w", dir=path.parent, prefix=".tape-mode-", delete=False) as f:
+        f.write(text)
+        tmp = f.name
+    os.replace(tmp, path)
+
+write_atomic('-- Switch with: hypr-tape-mode smooth | columns | toggle\nreturn "' + action + '"\n')
+result = subprocess.run(["hyprctl", "reload"], text=True, capture_output=True)
+errors = subprocess.run(["hyprctl", "configerrors"], text=True, capture_output=True)
+if result.returncode or errors.returncode or errors.stdout.strip():
+    write_atomic(old)
+    subprocess.run(["hyprctl", "reload"], capture_output=True)
+    raise SystemExit("Mode change rolled back: " + (result.stderr or errors.stdout or errors.stderr).strip())
+print(action)
+try:
+    subprocess.run(["notify-send", "Tape browsing", "Smooth" if action == "smooth" else "Column steps", "-t", "1800"], check=False)
+except FileNotFoundError:
+    pass

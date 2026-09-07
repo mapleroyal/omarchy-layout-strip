@@ -1,0 +1,73 @@
+{
+  "validatedOn": "2026-09-07",
+  "hyprland": {
+    "version": "0.56.2",
+    "gitHash": "efb50993780079460b0cbed1363e2166a2de1d9f"
+  },
+  "lua": "5.5.1",
+  "compiler": "GCC 16.2.1",
+  "weston": {
+    "version": "16.0.90",
+    "source": "https://gitlab.freedesktop.org/wayland/weston/-/archive/main/weston-main.tar.gz",
+    "archiveSha256": "fb4986e4b07946319b3bc426d7c0b5fb9465a2440e7cc5da6eb92fd5b8436342",
+    "sourcePatched": false,
+    "commit": "not provided by downloaded archive",
+    "mesonOptions": {
+      "backend-drm": false,
+      "backend-headless": true,
+      "backend-pipewire": false,
+      "backend-rdp": false,
+      "backend-vnc": false,
+      "backend-wayland": false,
+      "backend-x11": false,
+      "backend-default": "headless",
+      "renderer-gl": true,
+      "renderer-vulkan": false,
+      "xwayland": false,
+      "xwayland-path": "/usr/bin/Xwayland",
+      "systemd": false,
+      "shell-desktop": false,
+      "shell-ivi": false,
+      "shell-kiosk": true,
+      "shell-lua": false,
+      "desktop-shell-client-default": "weston-desktop-shell",
+      "deprecated-xdg-shell-v6-unstable": false,
+      "color-management-lcms": false,
+      "image-jpeg": true,
+      "image-webp": true,
+      "tools": [],
+      "demo-clients": false,
+      "simple-clients": [],
+      "resize-pool": true,
+      "tests": false,
+      "test-junit-xml": true,
+      "test-skip-is-failure": false,
+      "doc": false,
+      "perfetto": false,
+      "build-string": ""
+    },
+    "targets": [
+      "frontend/weston",
+      "libweston/backend-headless/headless-backend.so",
+      "libweston/renderer-gl/gl-renderer.so",
+      "kiosk-shell/kiosk-shell.so"
+    ]
+  },
+  "aquamarine": {
+    "version": "0.14.0",
+    "source": "https://github.com/hyprwm/aquamarine/archive/refs/tags/v0.14.0.tar.gz",
+    "archiveSha256": "5dcf0b17f7dd51539fd7e79d68484f04240b3b63cf9f5f21d5b6dea0088168f9",
+    "builtLibrarySha256": "cdec857eb6b1d664839a0553b90e3c403cf03d6e74024fc7311103ec5120a6e7",
+    "patch": "../tests/native/aquamarine-test-transport.patch",
+    "cmakeOptions": [
+      "-G",
+      "Ninja",
+      "-DCMAKE_BUILD_TYPE=Release",
+      "-DBUILD_TESTING=OFF"
+    ],
+    "buildTarget": "aquamarine",
+    "scope": "Private child compositor LD_LIBRARY_PATH only; not installed"
+  },
+  "liveCompositorInputTested": false,
+  "physicalOutputBackendEnabled": false
+}

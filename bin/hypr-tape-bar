@@ -1,0 +1,82 @@
+#!/usr/bin/env python3
+"""One-request JSON transport for the scrolling layout bar."""
+import argparse
+import json
+import math
+import re
+import subprocess
+import sys
+
+
+def lua_string(value):
+    # Numeric byte escapes are unambiguous in Lua and never become shell text.
+    return '"' + ''.join(f'\\{byte:03d}' for byte in value.encode('utf-8')) + '"'
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    commands = parser.add_subparsers(dest='command', required=True)
+    snapshot = commands.add_parser('snapshot')
+    snapshot.add_argument('--monitor')
+    snapshot.add_argument('--protect-region', nargs=4, type=float, metavar=('X', 'Y', 'WIDTH', 'HEIGHT'),
+                          help='refresh the strip input region in global logical coordinates')
+    focus = commands.add_parser('focus')
+    focus.add_argument('address')
+    focus.add_argument('--workspace', type=int, required=True)
+    focus.add_argument('--monitor')
+    close = commands.add_parser('close', help='request normal close without activating the window')
+    close.add_argument('address')
+    close.add_argument('--workspace', type=int, required=True)
+    close.add_argument('--monitor', required=True)
+    reorder = commands.add_parser('reorder', help='move a column without activating its window')
+    reorder.add_argument('address')
+    reorder.add_argument('--target', required=True)
+    reorder.add_argument('--side', choices=('before', 'after'), required=True)
+    reorder.add_argument('--workspace', type=int, required=True)
+    reorder.add_argument('--monitor', required=True)
+    args = parser.parse_args(argv)
+    for field in ('address', 'target'):
+        value = getattr(args, field, None)
+        if value is not None and not re.fullmatch(r'0x[0-9a-fA-F]+', value):
+            parser.error(f'{field} must be a Hyprland hexadecimal window address')
+        if value is not None:
+            setattr(args, field, value.lower())
+    if args.command in ('reorder', 'close') and not args.monitor:
+        parser.error('monitor name cannot be empty')
+    if args.command == 'snapshot' and args.protect_region is not None:
+        if not args.monitor:
+            parser.error('--protect-region requires a monitor name')
+        if not all(math.isfinite(value) for value in args.protect_region):
+            parser.error('--protect-region requires finite coordinates and dimensions')
+        width, height = args.protect_region[2:]
+        if not ((width > 0 and height > 0) or (width == 0 and height == 0)):
+            parser.error('--protect-region dimensions must both be positive, or both zero to clear')
+    monitor = lua_string(args.monitor) if args.monitor else 'nil'
+    if args.command == 'snapshot':
+        region = (', ' + ', '.join(repr(value) for value in args.protect_region)
+                  if args.protect_region is not None else '')
+        invocation = f'omarchy_tape_bar.snapshot({monitor}{region})'
+    elif args.command == 'reorder':
+        invocation = (f'omarchy_tape_bar.reorder({lua_string(args.address)}, '
+                      f'{lua_string(args.target)}, {lua_string(args.side)}, '
+                      f'{args.workspace}, {monitor})')
+    else:
+        invocation = (f'omarchy_tape_bar.{args.command}({lua_string(args.address)}, '
+                      f'{args.workspace}, {monitor})')
+    code = ('if not omarchy_tape_bar or omarchy_tape_bar.protocol_version ~= 2 then return \'{"ok":false,"error":"Tape bar protocol v2 integration is not loaded","columns":[]}\' end; '
+            'return ' + invocation)
+    try:
+        completed = subprocess.run(['hyprctl', 'repl', code], capture_output=True, text=True, timeout=3, check=False)
+        if completed.returncode:
+            raise RuntimeError(completed.stderr.strip() or completed.stdout.strip() or 'hyprctl failed')
+        result = json.loads(completed.stdout)
+        if not isinstance(result, dict) or not isinstance(result.get('ok'), bool):
+            raise ValueError('unexpected reply from Hyprland')
+    except (OSError, subprocess.SubprocessError, ValueError, RuntimeError) as error:
+        result = {'ok': False, 'error': str(error), 'columns': []}
+    print(json.dumps(result, ensure_ascii=False, separators=(',', ':')))
+    return 0 if result['ok'] else 1
+
+
+if __name__ == '__main__':
+    sys.exit(main())

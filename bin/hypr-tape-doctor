@@ -1,0 +1,121 @@
+#!/usr/bin/env python3
+"""Read-only health check for Layout Strip and its shared scrolling backend."""
+import json
+import os
+from pathlib import Path
+import subprocess
+
+PLUGIN_ID = 'user1.layout-strip'
+PROTOCOL_VERSION = 2
+
+
+def json_command(command, runner):
+    response = runner(command, capture_output=True, text=True, check=True, timeout=5)
+    value = json.loads(response.stdout)
+    if not isinstance(value, dict):
+        raise ValueError('Expected a JSON object from ' + command[0])
+    return value
+
+
+def shell_health(config, runner, errors):
+    state = {'enabled': False, 'status': 'disabled'}
+    path = config / 'omarchy/shell.json'
+    try:
+        settings = json.loads(path.read_text()) if path.exists() else {}
+        if not isinstance(settings, dict):
+            raise ValueError('shell.json must contain an object')
+        bar = settings.get('bar', {})
+        layout = bar.get('layout', {}) if isinstance(bar, dict) else {}
+        entries = [entry for group in ('left', 'center', 'right')
+                   for entry in (layout.get(group, []) if isinstance(layout, dict) else [])]
+        configured = any((entry.get('id') if isinstance(entry, dict) else entry) == PLUGIN_ID
+                         for entry in entries)
+        state['enabled'] = configured and PLUGIN_ID not in settings.get('disabledPlugins', [])
+        if not state['enabled']:
+            return state
+        state['status'] = 'unavailable'
+        debug = json_command(['omarchy', 'shell', PLUGIN_ID, 'debug'], runner)
+        issues = []
+        if debug.get('protocolVersion') != PROTOCOL_VERSION:
+            issues.append('Shell service protocol versions do not match')
+        for key in ('backendError', 'regionError'):
+            if debug.get(key):
+                issues.append(str(debug[key]))
+        instances = debug.get('instances')
+        if not isinstance(instances, list) or not instances:
+            issues.append('Enabled widget has no active shell instances')
+            instances = []
+        state['instances'] = []
+        for instance in instances:
+            if not isinstance(instance, dict):
+                issues.append('Shell returned an invalid widget instance')
+                continue
+            monitor = instance.get('monitorName') or 'unknown monitor'
+            summary = {key: instance.get(key) for key in
+                       ('monitorName', 'workspaceId', 'queryError', 'stale', 'capabilities')}
+            state['instances'].append(summary)
+            capabilities = instance.get('capabilities')
+            if not isinstance(capabilities, dict) or not capabilities.get('layout'):
+                issues.append(str(monitor) + ': host layout capability is unavailable')
+            elif capabilities.get('error'):
+                issues.append(str(monitor) + ': ' + str(capabilities['error']))
+            if instance.get('queryError'):
+                issues.append(str(monitor) + ': ' + str(instance['queryError']))
+            if instance.get('stale'):
+                issues.append(str(monitor) + ': widget state is stale')
+        state['status'] = 'unhealthy' if issues else 'active'
+        state['errors'] = issues
+        errors.extend('Shell: ' + issue for issue in issues)
+    except (OSError, ValueError, TypeError, subprocess.SubprocessError) as error:
+        state['status'] = 'unavailable' if state['enabled'] else 'configuration-error'
+        state['error'] = str(error)
+        errors.append('Shell: ' + str(error))
+    return state
+
+
+def health(config, data, runner=None):
+    runner = runner or subprocess.run
+    errors = []
+    for path in [config/'omarchy/plugins/user1.layout-strip/manifest.json',
+                 config/'hypr/tape-bootstrap.lua', config/'hypr/tape.lua',
+                 config/'hypr/tape-bar.lua', config/'hypr/tape-native.lua',
+                 data/'hypr-tape/active.lua']:
+        if not path.is_file():
+            errors.append('Missing ' + str(path))
+    result = {'ok': False, 'protocolVersion': PROTOCOL_VERSION, 'errors': errors}
+    try:
+        result['hyprland'] = json_command(['hyprctl', '-j', 'version'], runner)
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        errors.append('Hyprland: ' + str(error))
+    try:
+        # Installations with --bin-dir must use the helper shipped beside this
+        # executable, including when doctor itself is invoked through a symlink.
+        helper = Path(__file__).resolve().with_name('hypr-tape-bar')
+        snapshot = json_command([str(helper), 'snapshot'], runner)
+        result['backend'] = {key: snapshot.get(key) for key in
+                             ('protocolVersion', 'nativeProtocolVersion', 'available',
+                              'capabilities', 'reorderAvailable', 'protectRegionAvailable',
+                              'monitorName', 'workspaceId')}
+        if not snapshot.get('ok'):
+            errors.append(str(snapshot.get('error', 'Backend unavailable')))
+        if snapshot.get('protocolVersion') != PROTOCOL_VERSION:
+            errors.append('Frontend/backend protocol versions do not match')
+        if snapshot.get('nativeProtocolVersion') != PROTOCOL_VERSION:
+            errors.append('Native bridge needs rebuilding with hypr-tape-rebuild')
+    except (OSError, ValueError, subprocess.SubprocessError) as error:
+        errors.append('Backend: ' + str(error))
+    result['shell'] = shell_health(config, runner, errors)
+    result['ok'] = not errors
+    return result
+
+
+def main():
+    config = Path(os.environ.get('XDG_CONFIG_HOME', Path.home()/'.config'))
+    data = Path(os.environ.get('XDG_DATA_HOME', Path.home()/'.local/share'))
+    result = health(config, data)
+    print(json.dumps(result, indent=2))
+    return 0 if result['ok'] else 1
+
+
+if __name__ == '__main__':
+    raise SystemExit(main())
