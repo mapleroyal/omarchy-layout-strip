@@ -237,7 +237,7 @@ function M.new(hl)
     return failed(focused) and focused or restored
   end
 
-  local function pan_to(s, offset, window, exact_half)
+  local function pan_to(s, offset, window, exact_half, direct)
     local native = bridge()
     if not native or not s then return noop() end
     if not exact_half then offset = G.clamp(s, offset) end
@@ -245,8 +245,11 @@ function M.new(hl)
     local changed = math.abs(delta) > 0.5
     local result = noop()
     if changed then
-      result = s.addressed and native.pan(delta, exact_half == true, s.workspace_id, s.monitor_name)
-        or native.pan(delta, exact_half == true)
+      -- Only in-progress finger tracking bypasses native easing. Older bridges
+      -- keep their previous behavior, including during an upgrade or rollback.
+      local pan = direct and type(native.pan_direct) == "function" and native.pan_direct or native.pan
+      result = s.addressed and pan(delta, exact_half == true, s.workspace_id, s.monitor_name)
+        or pan(delta, exact_half == true)
     end
     if failed(result) then return result end
     if window then
@@ -425,7 +428,18 @@ function M.new(hl)
       gesture = { fallback = true, displacement = 0 }
       return noop()
     end
-    gesture = { initial = s, current = s.offset, displacement = 0,
+    local native = bridge()
+    local origin = s.offset
+    if type(native.pan_direct) == "function" and s.extent > s.width + EPS
+      and type(s.camera.renderedOffset) == "number" then
+      origin = s.camera.renderedOffset
+      -- Grab an unfinished snap at its visible position. Keep the original
+      -- resting snapshot for release/cancel, and measure only finger movement
+      -- as displacement (not the remaining distance of the interrupted snap).
+      local result = pan_to(s, origin, nil, origin < s.minimum or origin > s.maximum, true)
+      if failed(result) then return result end
+    end
+    gesture = { initial = s, current = origin, origin = origin, displacement = 0,
       peak = 0, direction = nil, backtracked = false }
     return noop()
   end
@@ -460,9 +474,10 @@ function M.new(hl)
     -- neighbor is narrower than half. Do not erase that choice by moving in
     -- the blocked direction or cancelling a subsequent gesture.
     local position = clamp(gesture.current + delta,
-      math.min(s.minimum, gesture.initial.offset), math.max(s.maximum, gesture.initial.offset))
+      math.min(s.minimum, gesture.initial.offset, gesture.origin),
+      math.max(s.maximum, gesture.initial.offset, gesture.origin))
     gesture.current = position
-    gesture.displacement = position - gesture.initial.offset
+    gesture.displacement = position - gesture.origin
     if not gesture.direction and math.abs(gesture.displacement) > EPS then
       gesture.direction = gesture.displacement > 0 and 1 or -1
     end
@@ -471,7 +486,7 @@ function M.new(hl)
       gesture.peak = math.max(gesture.peak, progress)
       if gesture.peak - progress >= 12 then gesture.backtracked = true end
     end
-    return pan_to(s, position, nil, position < s.minimum or position > s.maximum)
+    return pan_to(s, position, nil, position < s.minimum or position > s.maximum, true)
   end
 
   function self.smooth_end(event)

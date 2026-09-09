@@ -21,6 +21,13 @@ Retain the integration object for the configuration lifetime. Creating a replace
 
 Migration from the previous custom bindings changes only three integration blocks: the local pointer-refresh/RPC construction block, the close/fullscreen event handlers, and the two gesture-deferral helper functions. Use the installer migration rather than replacing an entire personal bindings file.
 
+Smooth gesture updates use the native `pan_direct` operation when available so
+the tape follows the fingers immediately. Release and cancellation retain normal
+animation. Regrabbing an unfinished landing starts from its visible position;
+only subsequent finger travel counts toward the next landing. The original goal
+remains the cancellation target. Discrete navigation keeps ordinary animated
+panning, and an older bridge without `pan_direct` keeps its existing behavior.
+
 ## Protocol v2
 
 Check `omarchy_tape_bar.protocol_version == 2` before requests. Every reply contains `protocolVersion: 2` and a boolean `ok`.

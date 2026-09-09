@@ -7,6 +7,11 @@ This local Hyprland plugin exposes the following functions to Lua:
   calls the public `CScrollingAlgorithm::moveTape` used by the stock gesture.
   It does not select windows, warp the pointer, choose a snap target, or implement
   animations. Hyprland recalculates the tape and animates the windows itself.
+- `hl.plugin.tape.pan_direct(...)` accepts the same arguments as `pan` and
+  recalculates immediately for in-progress finger tracking. It changes no
+  animation settings; ordinary panning, release snaps and cancellation keep
+  Hyprland's animation. Older bridges without this additive operation retain
+  the existing animated gesture path.
 - `hl.plugin.tape.pan(delta, true)` explicitly places the tape at the requested
   offset for half-screen placement. It temporarily uses the public controller's
   scroll inhibitor during one native recalculation so that a short tape is not
@@ -16,6 +21,10 @@ This local Hyprland plugin exposes the following functions to Lua:
 - `hl.plugin.tape.snapshot()` returns the native camera `offset`, primary viewport
   `width`, and usable-area `x`, `y`, `height`. Coordinates are monitor-local logical
   pixels. These are layout goals, so they remain useful while windows animate.
+  `renderedOffset` estimates the visible camera position only when at least two
+  columns agree on the animation translation and their sizes and secondary
+  positions are settled; otherwise it equals `offset`. A smooth gesture uses it
+  to grab an unfinished landing without jumping to the old animation goal.
 - `hl.plugin.tape.snapshot(workspaceId, monitorName)` reads a displayed scrolling
   workspace independently of keyboard focus. `hl.plugin.tape.pan(delta, exact,
   workspaceId, monitorName)` pans that same addressed workspace without activating
@@ -23,7 +32,7 @@ This local Hyprland plugin exposes the following functions to Lua:
   stale monitor/workspace context, real fullscreen, active native drag, and an
   existing inhibitor are rejected before a pan. This path powers close repair.
 - `hl.plugin.tape.info()` returns `protocolVersion=2`, capability flags
-  `addressedCamera`, `ownedRegions`, and `reorder`, the current live
+  `addressedCamera`, `directPan`, `ownedRegions`, and `reorder`, the current live
   `protectedRegionCount`, the callback's actual loaded library `path`, and
   compile-time `git_hash`. The path comes from the dynamic linker, so rebuild
   validation checks which binary supplies the functions, not just a plugin name.

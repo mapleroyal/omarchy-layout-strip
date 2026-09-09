@@ -559,7 +559,7 @@ static int reorder(lua_State* lua) {
     return 1;
 }
 
-static const char* panExact(Layout::Tiled::CScrollingAlgorithm* tape, double delta) {
+static const char* panExact(Layout::Tiled::CScrollingAlgorithm* tape, double delta, bool direct) {
     const auto column = tape->getColumnAtViewportCenter();
     const auto data   = column ? column->scrollingData.lock() : nullptr;
     if (!data || !data->controller)
@@ -587,13 +587,16 @@ static const char* panExact(Layout::Tiled::CScrollingAlgorithm* tape, double del
     // moveTape(0) skips recalc, but an explicit placement still needs the native
     // layout to apply the selected offset, even when it is already the goal.
     if (delta == 0.0)
-        data->recalculate();
-    else
+        data->recalculate(direct);
+    else if (direct) {
+        data->controller->adjustOffset(-static_cast<float>(delta));
+        data->recalculate(true);
+    } else
         tape->moveTape(static_cast<float>(delta));
     return nullptr;
 }
 
-static int pan(lua_State* lua) {
+static int panImpl(lua_State* lua, bool direct) {
     finishReleasedBarPress();
     const int args = lua_gettop(lua);
     if ((args != 1 && args != 2 && args != 4) || lua_type(lua, 1) != LUA_TNUMBER ||
@@ -620,13 +623,36 @@ static int pan(lua_State* lua) {
     }
 
     if (args >= 2 && lua_toboolean(lua, 2))
-        return result(lua, panExact(tape, delta));
+        return result(lua, panExact(tape, delta, direct));
+
+    if (direct) {
+        const auto column = tape->getColumnAtViewportCenter();
+        const auto data = column ? column->scrollingData.lock() : nullptr;
+        if (!data || !data->controller)
+            return result(lua, "direct pan requires a scrolling column");
+        // Match moveTape's native offset adjustment, but use the layout's
+        // immediate recalculation while fingers are down. No animation config
+        // is changed or retained; the next ordinary pan animates as usual.
+        if (delta != 0.0) {
+            data->controller->adjustOffset(-static_cast<float>(delta));
+            data->recalculate(true);
+        }
+        return result(lua);
+    }
 
     // Same public path as the stock scrolling gesture. Positive delta moves
     // content right and decreases the tape's camera offset. Recalculate uses
     // Hyprland's own window animations, with no forced warp.
     tape->moveTape(static_cast<float>(delta));
     return result(lua);
+}
+
+static int pan(lua_State* lua) {
+    return panImpl(lua, false);
+}
+
+static int panDirect(lua_State* lua) {
+    return panImpl(lua, true);
 }
 
 static int snapshot(lua_State* lua) {
@@ -641,8 +667,56 @@ static int snapshot(lua_State* lua) {
 
     const double width = tape->primaryViewportSize();
     const auto   area  = tape->usableArea();
+    const double offset = tape->normalizedTapeOffset() * width;
+    double renderedOffset = offset;
+    const auto column = tape->getColumnAtViewportCenter();
+    const auto data = column ? column->scrollingData.lock() : nullptr;
+    if (data && data->controller) {
+        // A camera pan translates all columns together. Require that agreement
+        // and settled sizes/secondary positions, so a window's pop-in, resize,
+        // or reorder animation cannot masquerade as a camera displacement.
+        // A group target's window() supplies its current visible member.
+        constexpr double EPS = 2.0;
+        size_t samples = 0;
+        double translation = 0.0;
+        bool haveTranslation = false;
+        bool coherent = true;
+        const bool horizontal = data->controller->isPrimaryHorizontal();
+        for (const auto& sampleColumn : data->columns) {
+            bool sampled = false;
+            for (const auto& targetData : sampleColumn->targetDatas) {
+                const auto target = targetData->target.lock();
+                const auto window = target ? target->window() : nullptr;
+                if (!window || !window->m_isMapped || window->isHidden())
+                    continue;
+                const auto goal = window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_GOAL);
+                const auto current = window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
+                const auto difference = goal.pos() - current.pos();
+                const double primary = horizontal ? difference.x : difference.y;
+                const double secondary = horizontal ? difference.y : difference.x;
+                if (!std::isfinite(primary) || std::abs(secondary) > EPS || std::abs(goal.w - current.w) > EPS ||
+                    std::abs(goal.h - current.h) > EPS || (haveTranslation && std::abs(primary - translation) > EPS)) {
+                    coherent = false;
+                    break;
+                }
+                if (!haveTranslation) {
+                    translation = primary;
+                    haveTranslation = true;
+                }
+                sampled = true;
+            }
+            if (!coherent)
+                break;
+            if (sampled)
+                ++samples;
+        }
+        const double candidate = offset + (data->controller->isReversed() ? -translation : translation);
+        if (coherent && samples >= 2 && std::isfinite(candidate))
+            renderedOffset = candidate;
+    }
     result(lua);
-    numberField(lua, "offset", tape->normalizedTapeOffset() * width);
+    numberField(lua, "offset", offset);
+    numberField(lua, "renderedOffset", renderedOffset);
     numberField(lua, "width", width);
     numberField(lua, "x", area.x);
     numberField(lua, "y", area.y);
@@ -665,6 +739,7 @@ static int info(lua_State* lua) {
     lua_setfield(lua, -2, "git_hash");
     numberField(lua, "protocolVersion", 2);
     boolField(lua, "addressedCamera", true);
+    boolField(lua, "directPan", true);
     boolField(lua, "ownedRegions", true);
     numberField(lua, "protectedRegionCount", g_barRegions.count(BarClock::now()));
     boolField(lua, "reorder", true);
@@ -682,7 +757,8 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
         throw std::runtime_error("native-tape: Hyprland ABI mismatch; rebuild the plugin against the running version");
 
     g_handle = handle;
-    if (!HyprlandAPI::addLuaFunction(handle, "tape", "pan", pan) || !HyprlandAPI::addLuaFunction(handle, "tape", "snapshot", snapshot) ||
+    if (!HyprlandAPI::addLuaFunction(handle, "tape", "pan", pan) || !HyprlandAPI::addLuaFunction(handle, "tape", "pan_direct", panDirect) ||
+        !HyprlandAPI::addLuaFunction(handle, "tape", "snapshot", snapshot) ||
         !HyprlandAPI::addLuaFunction(handle, "tape", "reorder", reorder) ||
         !HyprlandAPI::addLuaFunction(handle, "tape", "protect_bar_region", protectBarRegion) ||
         !HyprlandAPI::addLuaFunction(handle, "tape", "info", info))
@@ -692,7 +768,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_afterDrop  = Event::bus()->m_events.window.floating.listen([](PHLWINDOW window) { finishLeadingDrop(window); });
     g_barPressListener = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent event, Event::SCallbackInfo&) { guardBarPress(event); });
 
-    return {"native-tape", "Public scrolling navigation and addressed reorder bridge for Lua", "local", "2.0"};
+    return {"native-tape", "Public scrolling navigation and addressed reorder bridge for Lua", "local", "2.1"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
@@ -704,6 +780,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     g_pendingLeadingDrop.reset();
     g_dragOrigin.reset();
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "pan");
+    HyprlandAPI::removeLuaFunction(g_handle, "tape", "pan_direct");
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "snapshot");
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "reorder");
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "protect_bar_region");
