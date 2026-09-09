@@ -57,9 +57,12 @@ Required: Omarchy's Quickshell shell, Lua-enabled Hyprland scrolling layout,
 Python 3 for installation/tools, and the matching Hyprland/Lua development headers,
 GCC-compatible C++26 compiler and pkg-config for the native bridge.
 
-Tested against Omarchy 4.0.2-1, Quickshell 0.3.1, Qt 6.11.2 and Hyprland 0.56.2.
+Tested against Omarchy 4.0.2-1 and 4.0.3-1, Quickshell 0.3.1, Qt 6.11.2 and Hyprland 0.56.2.
 Native binaries are tied to the exact compositor commit and full ABI. Update and
 restart Hyprland before rebuilding against newly installed headers.
+After a Hyprland or dependency package update, run `hypr-tape-rebuild` if
+`hypr-tape-doctor` reports the native bridge unavailable. A package rebuild can
+require this even when the upstream Hyprland version number is unchanged.
 
 Install the published plugin and its shared backend:
 

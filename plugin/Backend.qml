@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Hyprland
 import "Protocol.js" as Protocol
+import "HostAdapter.js" as HostAdapter
 
 // One host-owned controller for all monitor instances. State reads and input
 // protection have independent schedules; neither process starts Python.
@@ -26,7 +27,7 @@ Item {
 
   function isActive(widget) {
     return !!(widget && widget.backendEnabled && widget.visible && widget.monitorName &&
-      !(widget.bar && widget.bar.barHidden === true));
+      !HostAdapter.hidden(widget.bar));
   }
   function registered(widget) { return widget && widgets.indexOf(widget) !== -1; }
   function registerWidget(widget) {

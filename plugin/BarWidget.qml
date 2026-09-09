@@ -41,14 +41,14 @@ BarWidget {
   readonly property var backendService: HostAdapter.service(bar, moduleName)
   readonly property bool globalBusy: backendEnabled && backendService ? backendService.busy : false
   readonly property bool operationBusy: actionBusy || globalBusy
-  readonly property bool barHidden: !!(bar && bar.barHidden === true)
+  readonly property bool barHidden: HostAdapter.hidden(bar)
   readonly property var measuredInput: HostAdapter.geometryInput(root, bar, surface, Style.space(8))
   property int snapshotRevision: 0
   property real previousViewportWidth: 0
   property bool preserveVisibleFocus: false
   property bool viewportUpdatePending: false
   readonly property string statusMessage: operationBusy ? "Window action in progress" : (actionError || queryError || hostCapabilities.error || (backendService && backendService.regionError) || "")
-  readonly property var hostCapabilities: HostAdapter.capabilities(bar)
+  readonly property var hostCapabilities: HostAdapter.capabilities(bar, root, surface)
   readonly property Item stripItem: strip
   readonly property Item viewportItem: viewport
   property bool dragging: false
@@ -152,7 +152,7 @@ BarWidget {
   }
 
   function protectedRegion() {
-    if (!surface || !surface.screen || !root.visible || !strip.visible || (bar && bar.barHidden === true)) return [0, 0, 0, 0];
+    if (!surface || !surface.screen || !root.visible || !strip.visible || barHidden) return [0, 0, 0, 0];
     var point = strip.mapToItem(surface.contentItem, 0, 0);
     var bottomOffset = bar && bar.position === "bottom" ? surface.screen.height - surface.height : 0;
     return [root.Screen.virtualX + point.x, root.Screen.virtualY + bottomOffset + point.y,

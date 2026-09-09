@@ -12,7 +12,7 @@ def run(args):
     print('+ '+shlex.join(map(str,args)),flush=True)
     subprocess.run(list(map(str,args)),cwd=ROOT,check=True,timeout=60)
 
-for name in ('Geometry.test.cjs','HostAdapter.test.cjs','IconModel.test.cjs','model.test.cjs','protocol.cjs'):
+for name in ('Geometry.test.cjs','HostAdapter.test.cjs','ScopedHost.test.cjs','IconModel.test.cjs','model.test.cjs','protocol.cjs'):
     run(['node','tests/'+name])
 for source in sorted((ROOT/'tests/lua').glob('*.lua')):
     run(['lua',source,'backend/'])
@@ -31,5 +31,6 @@ with tempfile.TemporaryDirectory(prefix='strip-cpp-tests-') as temporary:
 run([sys.executable,'tests/icons/run.py'])
 run([sys.executable,'tests/run_service.py'])
 run([sys.executable,'tests/run_backend.py'])
+run([sys.executable,'tests/facade-qml/run.py'])
 run([sys.executable,'tests/qml/run.py'])
 print('All deterministic and offscreen suites passed',flush=True)

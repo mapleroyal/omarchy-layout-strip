@@ -1,3 +1,10 @@
+# Unreleased
+
+- Restore strip allocation on Omarchy 4.0.3's scoped bar interface so it stays between neighboring widgets and the center clock.
+- Read current-surface slot geometry without accessing the host bar or other plugins' services; retain the older host interface.
+- Keep placement available through the Omarchy CLI and honor the scoped bar's hidden state for polling and input regions.
+- Add regression coverage for reactive slot loading, visibility, resizing, center anchors and safely quoted placement commands.
+
 # v1.0.0 — initial release
 
 - Retain address-keyed icon delegates across metadata updates and column moves.

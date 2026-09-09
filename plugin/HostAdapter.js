@@ -19,14 +19,48 @@ function configuredEntries(bar, region) {
   return Array.isArray(entries) ? entries : [];
 }
 
-function capabilities(bar) {
-  var slots = !!bar && Array.isArray(bar.moduleSlots);
+// Omarchy 4.0.3 injects a scoped PluginBarApi rather than the host Bar. Read
+// slot geometry from this surface's visual tree; keep all operations on the
+// scoped API. Never recover the host or another plugin's service through it.
+function surfaceSlots(surface) {
+  var slots = [];
+  function visit(item) {
+    if (!item) return;
+    if ("activeItem" in item && "moduleName" in item && "region" in item && "entry" in item) {
+      slots.push(item);
+      return; // Do not inspect widget internals or depend on our own width.
+    }
+    var children = item.children || [];
+    for (var i = 0; i < children.length; i++) visit(children[i]);
+  }
+  visit(surface && surface.contentItem);
+  return slots;
+}
+
+function moduleSlots(bar, surface) {
+  return bar && Array.isArray(bar.moduleSlots) ? bar.moduleSlots : surfaceSlots(surface);
+}
+
+function centerAnchor(bar) {
+  if (!bar) return "";
+  if (typeof bar.centerAnchor === "string") return bar.centerAnchor;
+  var config = bar.shell && bar.shell.barConfig;
+  return String(config && config.centerAnchor || "");
+}
+
+function hidden(bar) {
+  return !!bar && (bar.barHidden === true ||
+    !!(bar.shell && bar.shell.bar && bar.shell.bar.barHidden === true));
+}
+
+function capabilities(bar, root, surface) {
+  var slots = !!bar && (Array.isArray(bar.moduleSlots) || !!findSlot(root, bar, surface));
   var entries = !!bar && (callable(bar, "layoutEntries") || !!bar.layoutConfig);
   var windows = callable(bar, "targetBelongsToWindow") || callable(bar, "slotWindow");
   var shell = bar && bar.shell;
   var layout = slots && entries && windows;
   var settings = callable(shell, "updateEntryInline");
-  var move = layout && callable(bar, "dropBarModule");
+  var move = layout && (callable(bar, "dropBarModule") || callable(bar, "run"));
   var forwarding = callable(bar, "registerClickTarget") && callable(bar, "unregisterClickTarget");
   var warnings = [];
   if (!settings) warnings.push("This bar cannot save strip settings");
@@ -50,7 +84,8 @@ function belongsToSurface(bar, slot, surface) {
 }
 
 function findSlot(root, bar, surface) {
-  var slots = bar && bar.moduleSlots || [];
+  if (!root || !bar || !surface) return null;
+  var slots = moduleSlots(bar, surface);
   for (var i = 0; i < slots.length; i++) {
     var slot = slots[i];
     if (slot && slot.activeItem === root && belongsToSurface(bar, slot, surface)) return slot;
@@ -69,9 +104,11 @@ function entryMatchScore(left, right) {
 
 function geometryInput(root, bar, surface, margin) {
   var input = {width: surface ? surface.width : 0, margin: margin,
-    selfId: root ? root.moduleName : "", centerAnchor: bar ? bar.centerAnchor : "",
+    selfId: root ? root.moduleName : "", centerAnchor: centerAnchor(bar),
     sections: {left: [], center: [], right: []}};
-  var slots = bar && bar.moduleSlots || [];
+  var slots = moduleSlots(bar, surface);
+  // A missing/starting host must not allocate the entire bar as empty space.
+  if (!bar || !slots.length) { input.width = 0; return input; }
   var used = [];
   var names = ["left", "center", "right"];
   for (var r = 0; r < names.length; r++) {
@@ -134,10 +171,29 @@ function persistSetting(bar, moduleName, entry) {
 
 function moveWidget(root, bar, surface, region, beforeId) {
   var slot = findSlot(root, bar, surface);
-  if (!slot || !callable(bar, "dropBarModule"))
+  if (!slot || ["left", "center", "right"].indexOf(region) < 0)
     return {ok: false, error: "This bar cannot move the strip"};
-  try { return {ok: true, changed: bar.dropBarModule(slot, region, beforeId) === true}; }
+  try {
+    if (callable(bar, "dropBarModule"))
+      return {ok: true, changed: bar.dropBarModule(slot, region, beforeId) === true};
+    if (callable(bar, "run")) {
+      var entries = configuredEntries(bar, region);
+      if (beforeId && !entries.some(function(entry) { return entryId(entry) === beforeId; }))
+        return {ok: false, error: "The destination widget is no longer in this section"};
+      var command = "omarchy bar move " + shellQuote(root.moduleName) + " --section " + shellQuote(region);
+      command += beforeId ? " --before " + shellQuote(beforeId)
+        : " --index " + entries.filter(function(entry) { return entryId(entry) !== root.moduleName; }).length;
+      bar.run(command);
+      // The CLI saves asynchronously; shell.json's watcher applies the move.
+      return {ok: true, changed: false, pending: true};
+    }
+    return {ok: false, error: "This bar cannot move the strip"};
+  }
   catch (error) { return {ok: false, error: "Could not move the strip: " + String(error)}; }
+}
+
+function shellQuote(value) {
+  return "'" + String(value).replace(/'/g, "'\\''") + "'";
 }
 
 function registerClickTarget(bar, target) {
@@ -165,5 +221,6 @@ if (typeof module !== "undefined") module.exports = {
   capabilities: capabilities, configuredEntries: configuredEntries, findSlot: findSlot,
   geometryInput: geometryInput, moveChoices: moveChoices, persistSetting: persistSetting,
   moveWidget: moveWidget, registerClickTarget: registerClickTarget,
-  unregisterClickTarget: unregisterClickTarget, service: service, appLibrary: appLibrary
+  unregisterClickTarget: unregisterClickTarget, service: service, appLibrary: appLibrary,
+  hidden: hidden
 };
