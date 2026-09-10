@@ -17,7 +17,8 @@ position—which columns are visible—not a thumbnail or recording device.
 ## Interaction
 
 - Click an icon to focus its window and align the column's left edge where the
-  layout permits. Close an app from its right-click menu without first focusing it.
+  layout permits. Middle-click an icon or use its right-click menu to close that
+  window without first focusing it. Apps can show their usual unsaved-work prompt.
 - Drag an icon to reorder whole columns; release outside or right-click during
   the drag to cancel. Hovering near the strip ends scrolls only the strip.
 - Scroll overflow with wheel, trackpad or arrows. The arrow menu switches between

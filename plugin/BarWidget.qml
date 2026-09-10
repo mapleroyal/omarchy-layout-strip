@@ -240,8 +240,11 @@ BarWidget {
     runAction([helper, "focus", column.address, "--workspace", String(snapshot.workspaceId), "--monitor", monitorName]);
   }
 
-  function closeColumn() {
-    var address = menuAddress, workspace = menuWorkspace, monitor = menuMonitor;
+  function closeColumn(column) {
+    if (dragging || resizing) return;
+    var address = column ? column.address : menuAddress;
+    var workspace = column ? snapshot.workspaceId : menuWorkspace;
+    var monitor = column ? monitorName : menuMonitor;
     close();
     if (!Model.validAddress(address)) return;
     runAction([helper, "close", address, "--workspace", String(workspace), "--monitor", monitor]);

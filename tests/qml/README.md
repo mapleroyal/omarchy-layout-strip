@@ -8,10 +8,12 @@ are recorded by an in-memory Omarchy host fixture.
 
 The suite sends real QtTest mouse moves, button presses/releases, and wheel
 events to the actual plugin and its visual components. It currently checks
-140 assertions covering input, geometry, appearance, drag/drop, resize,
+149 assertions covering input, geometry, appearance, drag/drop, resize,
 forwarded hitboxes, stable delegate identity, popup anchoring, metadata during
 a press or glide, stale-data recovery, focus visibility, busy feedback, and
-latest-only focus queueing.
+latest-only focus queueing. Middle-click coverage includes release timing,
+the clicked address rather than stale menu context, popup forwarding, busy and
+resize suppression, and middle input during/after a cancelled drag.
 
 Only the Wayland-specific container is substituted: `KeyboardPanel.qml`
 preserves the host's open/close coordinator contract without creating a

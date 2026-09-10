@@ -44,6 +44,8 @@ Item {
   function triggerPress(button) {
     if (button === Qt.LeftButton)
       controller.focusColumn(modelData);
+    else if (button === Qt.MiddleButton)
+      controller.closeColumn(modelData);
     else if (button === Qt.RightButton)
       controller.openAppMenu(tile, modelData);
   }
@@ -97,7 +99,7 @@ Item {
   MouseArea {
     id: hit
     anchors.fill: parent
-    acceptedButtons: Qt.LeftButton | Qt.RightButton
+    acceptedButtons: Qt.LeftButton | Qt.MiddleButton | Qt.RightButton
     hoverEnabled: true
     cursorShape: controller.dragging ? Qt.ClosedHandCursor : Qt.PointingHandCursor
     preventStealing: true
@@ -113,7 +115,7 @@ Item {
         suppressClick = true;
         return;
       }
-      if (event.button === Qt.LeftButton || !pressedButtons || pressedButtons === Qt.RightButton) {
+      if (event.button === Qt.LeftButton || !pressedButtons || pressedButtons === event.button) {
         dragged = false;
         suppressClick = false;
         pressedPoint = mapToItem(strip, event.x, event.y);

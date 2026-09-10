@@ -355,6 +355,30 @@ ShellRoot {
           firstTarget.triggerPress(Qt.RightButton);
           check(widget.menuKind==="app" && widget.menuAddress==="0x1","Popup forwarding right-click reaches exact app context");
           widget.close();
+          widget.openAppMenu(allTiles()[2],allTiles()[2].modelData);
+          widget.close();
+          requestedCommands=[];
+          events.mousePress(first,first.width/2,first.height/2,Qt.MiddleButton,Qt.NoModifier,1);
+          check(requestedCommands.length===0,"Middle press waits for click release before closing");
+          events.mouseRelease(first,first.width/2,first.height/2,Qt.MiddleButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && requestedCommands[0][1]==="close" && requestedCommands[0][2]==="0x1" &&
+            requestedCommands[0][4]==="4" && requestedCommands[0][6]===widget.monitorName,
+            "Middle click closes exactly the inactive clicked window in its current workspace, not the stale menu target");
+          check(!widget.menuOpen && widget.snapshot.activeAddress==="0x2","Middle close neither focuses the window nor opens a menu");
+          requestedCommands=[];
+          firstTarget.triggerPress(Qt.MiddleButton);
+          check(requestedCommands.length===1 && requestedCommands[0][1]==="close" && requestedCommands[0][2]==="0x1",
+            "Popup forwarding middle-click closes the addressed tile once");
+          widget.actionBusy=true;
+          requestedCommands=[];
+          firstTarget.triggerPress(Qt.MiddleButton);
+          check(requestedCommands.length===0 && !widget.pendingFocus,"Busy middle close is not queued or converted to focus");
+          widget.actionBusy=false;
+          widget.resizing=true;
+          firstTarget.triggerPress(Qt.MiddleButton);
+          check(requestedCommands.length===0,"Forwarded middle close is suppressed during resize");
+          widget.resizing=false;
+          widget.lastCommand=[];
           away();
           break;
         case 19:
@@ -457,10 +481,25 @@ ShellRoot {
           events.mousePress(first,first.width/2,first.height/2,Qt.LeftButton,Qt.NoModifier,1);
           events.mouseMove(first,first.width/2+10,first.height/2,1,Qt.LeftButton,Qt.NoModifier);
           check(widget.dragging,"Secondary-button test begins active drag");
+          var count=requestedCommands.length;
+          events.mousePress(first,first.width/2+10,first.height/2,Qt.MiddleButton,Qt.NoModifier,1);
+          first.triggerPress(Qt.MiddleButton);
+          check(widget.dragging && requestedCommands.length===count,"Middle input during drag does not close or cancel the dragged window");
+          events.mouseRelease(first,first.width/2+10,first.height/2,Qt.MiddleButton,Qt.NoModifier,1);
+          events.mouseRelease(first,first.width/2+10,first.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          check(requestedCommands.length===count && !widget.menuOpen,"Releasing the middle/left sequence never closes or focuses a window");
+          // TestEvent reports no held buttons after the middle release. Start
+          // a separate drag to exercise the existing right-button cancellation.
+          events.mousePress(first,first.width/2,first.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          events.mouseMove(first,first.width/2+10,first.height/2,1,Qt.LeftButton,Qt.NoModifier);
           events.mousePress(first,first.width/2+10,first.height/2,Qt.RightButton,Qt.NoModifier,1);
           events.mouseRelease(first,first.width/2+10,first.height/2,Qt.RightButton,Qt.NoModifier,1);
           events.mouseRelease(first,first.width/2+10,first.height/2,Qt.LeftButton,Qt.NoModifier,1);
           check(!widget.dragging && widget.lastCommand.length===0 && !widget.menuOpen,"Right-button cancellation cannot strand drag or trigger menu/click");
+          events.mouseClick(first,first.width/2,first.height/2,Qt.MiddleButton,Qt.NoModifier,1);
+          check(requestedCommands.length===count+1 && widget.lastCommand[1]==="close" && widget.lastCommand[2]==="0x1",
+            "A fresh middle click works after the preceding drag was cancelled");
+          widget.lastCommand=[];
           panel.implicitWidth=150;
           break;
         case 28:
