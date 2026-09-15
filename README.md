@@ -42,6 +42,12 @@ navigation continues through the shared backend; vertical bars, a separate
 keyboard traversal mode for tiles, and individual stacked members are outside
 this widget's current feature set.
 
+In smooth gesture mode, scrolling-managed fullscreen windows—including browser
+videos—move with the other columns. Swipe away and back without leaving
+fullscreen; cancellation returns to the original view. This requires the matched
+Lua/native backend with `layoutFullscreen` support. Fullscreen handled outside
+the scrolling layout retains its existing navigation behavior.
+
 ## Reliability and performance
 
 Stable models retain icon objects during title/focus updates, so updates do not

@@ -7,6 +7,10 @@ This local Hyprland plugin exposes the following functions to Lua:
   calls the public `CScrollingAlgorithm::moveTape` used by the stock gesture.
   It does not select windows, warp the pointer, choose a snap target, or implement
   animations. Hyprland recalculates the tape and animates the windows itself.
+  Camera operations admit fullscreen/maximized columns owned by Hyprland's
+  scrolling fullscreen handler, including a column currently covering the
+  monitor. Panning preserves both the client's and compositor's fullscreen
+  modes, so returning to the column restores the fullscreen view.
 - `hl.plugin.tape.pan_direct(...)` accepts the same arguments as `pan` and
   recalculates immediately for in-progress finger tracking. It changes no
   animation settings; ordinary panning, release snaps and cancellation keep
@@ -25,14 +29,21 @@ This local Hyprland plugin exposes the following functions to Lua:
   columns agree on the animation translation and their sizes and secondary
   positions are settled; otherwise it equals `offset`. A smooth gesture uses it
   to grab an unfinished landing without jumping to the old animation goal.
+  `layoutFullscreen=true` certifies that this bridge supports scrolling-owned
+  fullscreen camera navigation and rejects other fullscreen handlers. It is a
+  capability marker, not the current fullscreen state. Fullscreen columns retain
+  their native width fraction (monitor size divided by usable viewport size),
+  which can be slightly larger than one; `width` remains the usable viewport.
+  The Lua caller treats the fullscreen coverage range as one centered resting
+  view, avoiding a second swipe stop only a few outer-gap pixels away.
 - `hl.plugin.tape.snapshot(workspaceId, monitorName)` reads a displayed scrolling
   workspace independently of keyboard focus. `hl.plugin.tape.pan(delta, exact,
   workspaceId, monitorName)` pans that same addressed workspace without activating
   it. These calls support a floating focused window and another focused monitor;
-  stale monitor/workspace context, real fullscreen, active native drag, and an
+  stale monitor/workspace context, fullscreen owned by another handler, active native drag, and an
   existing inhibitor are rejected before a pan. This path powers close repair.
 - `hl.plugin.tape.info()` returns `protocolVersion=2`, capability flags
-  `addressedCamera`, `addressedResize`, `directPan`, `ownedRegions`, and `reorder`, the current live
+  `addressedCamera`, `addressedResize`, `directPan`, `layoutFullscreen`, `ownedRegions`, and `reorder`, the current live
   `protectedRegionCount`, the callback's actual loaded library `path`, and
   compile-time `git_hash`. The path comes from the dynamic linker, so rebuild
   validation checks which binary supplies the functions, not just a plugin name.
@@ -108,12 +119,25 @@ This local Hyprland plugin exposes the following functions to Lua:
   zero-based. There is no keyboard-focus fallback when this function is absent.
 
 Successful calls return a table with `ok = true`. Invalid arguments or a
-non-scrolling / fullscreen workspace or focused floating window return
+non-scrolling workspace, unsupported fullscreen handler, or focused floating window return
 `{ok = false, error = "..."}`. Empty tapes may return valid geometry but have no
 windows to navigate. Pan and snapshot resolve the focused monitor's active special
 workspace, if any, otherwise its active workspace. Info does not require a focused
 window or a scrolling workspace. The Lua caller owns navigation policy and should
 check `ok` and handle an absent plugin by using its fallback.
+
+The fullscreen camera check includes offscreen fullscreen members, so permission
+does not change when a fullscreen column stops covering the viewport midway
+through a gesture. Every pan also refuses independent scroll inhibitors and
+native window drags. No fullscreen state is temporarily removed, and there is no
+fullscreen gesture lease to leak on cancellation or unload. Hyprland 0.56.2
+queues a property refresh when a fullscreen column starts or stops covering the viewport;
+that refresh otherwise fits the old focused column back into view. The bridge
+drains it through the public property refresher while briefly protecting the
+resulting camera with the native scroll inhibitor. The previous inhibitor state
+is restored before the pan returns, including direct updates, animated landings,
+and cancellation. Column resize, reorder, native drag repair, and bar-press protection retain their existing
+fullscreen exclusions; the camera capability does not authorize those edits.
 
 The bridge uses the supported `HyprlandAPI::addLuaFunction` registration API and
 public layout methods. It also listens to native mouse-button and floating-state

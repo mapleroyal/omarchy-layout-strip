@@ -28,6 +28,20 @@ only subsequent finger travel counts toward the next landing. The original goal
 remains the cancellation target. Discrete navigation keeps ordinary animated
 panning, and an older bridge without `pan_direct` keeps its existing behavior.
 
+Scrolling-managed fullscreen windows participate in the same smooth gestures.
+The native snapshot advertises `layoutFullscreen=true` after validating that
+the workspace contains no unsupported fullscreen handler. Lua retains the
+monitor-sized column width and treats its covering range as one resting view,
+including at the ends of the tape. Swiping away, returning, or cancelling never
+toggles the window's internal or client fullscreen state. A fullscreen state
+change during a gesture invalidates its saved geometry. Other fullscreen
+handlers and older bridges retain their existing focus fallback.
+
+This path does not require changing `binds.movefocus_cycles_fullscreen`: panning
+reveals the destination before selecting it directly on release. Resizing and
+half-placement still reject an active fullscreen window. The native bridge must
+be rebuilt with the matching Lua sources before fullscreen tracking is enabled.
+
 ## Protocol v2
 
 Check `omarchy_tape_bar.protocol_version == 2` before requests. Every reply contains `protocolVersion: 2` and a boolean `ok`.

@@ -39,6 +39,19 @@ end
 function G.stops(s)
   local stops = {}
   local function add(offset, low, high)
+    -- A layout-managed fullscreen column includes the monitor's outer gaps,
+    -- so it is slightly wider than the usable viewport. Every position that
+    -- covers that viewport is the same fullscreen view. Fold even a tape-end
+    -- stop into that range instead of adding a second, gap-sized swipe step.
+    for _, column in ipairs(s.columns) do
+      if column.fullscreen and column.size >= s.width then
+        local left, right = column.start, column.finish - s.width
+        if offset >= left - EPS and offset <= right + EPS then
+          offset, low, high = (left + right) / 2, left, right
+          break
+        end
+      end
+    end
     offset = G.clamp(s, offset)
     stops[#stops + 1] = { offset = offset,
       low = G.clamp(s, low or offset), high = G.clamp(s, high or offset) }
@@ -47,9 +60,9 @@ function G.stops(s)
   add(s.maximum)
   for _, column in ipairs(s.columns) do
     local left, right = column.start, column.finish - s.width
-    if column.size >= s.width * 0.96 and column.size <= s.width + EPS then
-      -- A nearly full-width column has a small alignment range. Treat that
-      -- range as one view, preserving intentional peeks without tiny steps.
+    if column.fullscreen or (column.size >= s.width * 0.96 and column.size <= s.width + EPS) then
+      -- Fullscreen and nearly full-width columns each have one alignment
+      -- range, preserving intentional peeks without tiny extra steps.
       add((left + right) / 2, math.min(left, right), math.max(left, right))
     else
       add(left)
@@ -190,7 +203,10 @@ function M.new(hl)
     if not camera or camera.ok == false or not camera.width or camera.width <= 0 or camera.offset == nil then return nil end
     local columns, indexes = {}, {}
     local active = hl.get_active_window()
-    if active and active.workspace and active.workspace.id == workspace.id and active.fullscreen ~= 0 then return nil end
+    -- The native bridge validates the fullscreen handler. Older bridges cannot
+    -- safely pan an active fullscreen window; keep their original fallback.
+    if active and active.workspace and active.workspace.id == workspace.id and active.fullscreen ~= 0
+      and camera.layoutFullscreen ~= true then return nil end
     for _, window in ipairs(hl.get_workspace_windows(workspace)) do
       local info = window.layout
       local column = info and info.name == "scrolling" and info.column
@@ -198,6 +214,7 @@ function M.new(hl)
         and not indexes[column.index] then
         indexes[column.index] = true
         columns[#columns + 1] = { index = column.index, width = column.width, window = window,
+          fullscreen = window.fullscreen ~= nil and window.fullscreen ~= 0,
           windows = column.windows or { window } }
       end
     end
@@ -216,6 +233,7 @@ function M.new(hl)
     for i, column in ipairs(columns) do
       local geometry = s.columns[i]
       geometry.index, geometry.window, geometry.windows = column.index, column.window, column.windows
+      geometry.fullscreen = column.fullscreen
       for _, window in ipairs(column.windows) do
         if active and window.address == active.address then s.active_index = i; geometry.window = active end
       end
@@ -505,7 +523,8 @@ function M.new(hl)
       or math.abs(a.width - b.width) > EPS or #a.columns ~= #b.columns then return false end
     for i, column in ipairs(a.columns) do
       local other = b.columns[i]
-      if math.abs(column.width - other.width) > 0.00001 or #column.windows ~= #other.windows then return false end
+      if math.abs(column.width - other.width) > 0.00001 or column.fullscreen ~= other.fullscreen
+        or #column.windows ~= #other.windows then return false end
       local members = {}
       for _, member in ipairs(column.windows) do members[member.address] = true end
       for _, member in ipairs(other.windows) do if not members[member.address] then return false end end

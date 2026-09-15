@@ -8,12 +8,14 @@
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
+#include <hyprland/src/config/supplementary/propRefresher/PropRefresher.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
 #include <hyprland/src/layout/algorithm/tiled/scrolling/ScrollingAlgorithm.hpp>
 #include <hyprland/src/layout/space/Space.hpp>
 #include <hyprland/src/layout/supplementary/DragController.hpp>
 #include <hyprland/src/managers/fullscreen/FullscreenController.hpp>
+#include <hyprland/src/managers/fullscreen/handler/FullscreenHandler.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
 #include <hyprland/src/state/MonitorState.hpp>
 
@@ -104,6 +106,21 @@ static Layout::Tiled::CScrollingAlgorithm* tapeForWorkspace(PHLWORKSPACE workspa
     return dynamic_cast<Layout::Tiled::CScrollingAlgorithm*>(algorithm->tiledAlgo().get());
 }
 
+static bool cameraFullscreenSafe(PHLWORKSPACE workspace) {
+    // Scrolling owns fullscreen columns and explicitly supports moving them
+    // through the viewport without changing their client or internal FS mode.
+    // Check every FS member, including offscreen ones: hasFullscreen() defaults
+    // to covering windows and would change its answer halfway through a swipe.
+    for (const auto& window : Desktop::viewState()->windows()) {
+        if (!window || !window->m_isMapped || window->m_workspace != workspace ||
+            Fullscreen::controller()->getFullscreenModes(window).internal == Fullscreen::FSMODE_NONE)
+            continue;
+        if (Fullscreen::controller()->getFullscreenHandlerName(window) != Fullscreen::FULLSCREEN_HANDLER_SCROLLING)
+            return false;
+    }
+    return true;
+}
+
 static Layout::Tiled::CScrollingAlgorithm* currentTape() {
     const auto focus = Desktop::focusState();
     if (!focus)
@@ -121,9 +138,7 @@ static Layout::Tiled::CScrollingAlgorithm* currentTape() {
     if (window && (!window->m_isMapped || window->m_isFloating || window->m_workspace != workspace))
         return nullptr;
 
-    // Real fullscreen is outside tape navigation. A full-width tiled column is
-    // still an ordinary column and does not satisfy this check.
-    if (Fullscreen::controller()->hasFullscreen(workspace))
+    if (!cameraFullscreenSafe(workspace))
         return nullptr;
 
     return tapeForWorkspace(workspace);
@@ -359,7 +374,7 @@ static Layout::Tiled::CScrollingAlgorithm* addressedTape(lua_State* lua, int wor
     if (!monitor)
         return nullptr;
     const auto workspace = monitor->m_activeSpecialWorkspace ? monitor->m_activeSpecialWorkspace : monitor->m_activeWorkspace;
-    if (!valid(workspace) || workspace->m_id != lua_tointeger(lua, workspaceIndex) || Fullscreen::controller()->hasFullscreen(workspace))
+    if (!valid(workspace) || workspace->m_id != lua_tointeger(lua, workspaceIndex) || !cameraFullscreenSafe(workspace))
         return nullptr;
     return tapeForWorkspace(workspace);
 }
@@ -680,6 +695,35 @@ static const char* panExact(Layout::Tiled::CScrollingAlgorithm* tape, double del
     return nullptr;
 }
 
+static void finishFullscreenPan(Layout::Tiled::CScrollingAlgorithm* tape, const SP<Layout::ITarget>& fullscreenBefore) {
+    const auto handler = tape->getFSHandler();
+    if (!handler || handler->getFullscreen(true) == fullscreenBefore)
+        return;
+    const auto column = tape->getColumnAtViewportCenter();
+    const auto data = column ? column->scrollingData.lock() : nullptr;
+    if (!data || !data->controller)
+        return;
+    auto& inhibitor = data->controller->getScrollInhibitor();
+    if (inhibitor.isInhibited)
+        return;
+
+    // Crossing a fullscreen boundary queues a native property refresh. In
+    // 0.56.2 its later UNKNOWN recalculation hard-fits the old focused column,
+    // undoing the swipe before its next update. Drain that refresh while the
+    // just-selected camera is protected, then restore the inhibitor within
+    // this call. No gesture-long lease, fullscreen toggle, or focus change.
+    // Keep data alive across callbacks, and do not use tape after the refresh:
+    // a callback may close a window or replace the workspace's layout.
+    struct SRestoreInhibitor {
+        Layout::Tiled::SScrollInhibitor& target;
+        Layout::Tiled::SScrollInhibitor saved;
+        ~SRestoreInhibitor() { target = saved; }
+    } restore{inhibitor, inhibitor};
+    inhibitor.isInhibited = true;
+    inhibitor.offsetWhenInhibited = data->controller->getOffset();
+    Config::Supplementary::refresher()->executeScheduledRefreshImmediately();
+}
+
 static int panImpl(lua_State* lua, bool direct) {
     finishReleasedBarPress();
     const int args = lua_gettop(lua);
@@ -693,21 +737,29 @@ static int panImpl(lua_State* lua, bool direct) {
 
     const auto tape = args == 4 ? addressedTape(lua, 3, 4) : currentTape();
     if (!tape)
-        return result(lua, "the requested scrolling workspace is unavailable or fullscreen");
+        return result(lua, "the requested scrolling workspace is unavailable or has unsupported fullscreen");
     if (const auto& drag = g_layoutManager->dragController(); drag && drag->target())
         return result(lua, "cannot pan during a native window drag");
 
     if (tape->primaryViewportSize() <= 0)
         return result(lua, "scrolling viewport has no usable size");
-    if (args == 4) {
+    {
         const auto column = tape->getColumnAtViewportCenter();
         const auto data = column ? column->scrollingData.lock() : nullptr;
-        if (!data || !data->controller || data->controller->getScrollInhibitor().isInhibited)
-            return result(lua, "addressed pan cannot replace another scrolling operation");
+        if (data && data->controller && data->controller->getScrollInhibitor().isInhibited)
+            return result(lua, "pan cannot replace another scrolling operation");
+        if (args == 4 && (!data || !data->controller))
+            return result(lua, "addressed pan requires a scrolling column");
     }
 
-    if (args >= 2 && lua_toboolean(lua, 2))
-        return result(lua, panExact(tape, delta, direct));
+    const auto handler = tape->getFSHandler();
+    const auto fullscreenBefore = handler ? handler->getFullscreen(true) : nullptr;
+    if (args >= 2 && lua_toboolean(lua, 2)) {
+        if (const auto error = panExact(tape, delta, direct))
+            return result(lua, error);
+        finishFullscreenPan(tape, fullscreenBefore);
+        return result(lua);
+    }
 
     if (direct) {
         const auto column = tape->getColumnAtViewportCenter();
@@ -721,6 +773,7 @@ static int panImpl(lua_State* lua, bool direct) {
             data->controller->adjustOffset(-static_cast<float>(delta));
             data->recalculate(true);
         }
+        finishFullscreenPan(tape, fullscreenBefore);
         return result(lua);
     }
 
@@ -728,6 +781,7 @@ static int panImpl(lua_State* lua, bool direct) {
     // content right and decreases the tape's camera offset. Recalculate uses
     // Hyprland's own window animations, with no forced warp.
     tape->moveTape(static_cast<float>(delta));
+    finishFullscreenPan(tape, fullscreenBefore);
     return result(lua);
 }
 
@@ -805,6 +859,7 @@ static int snapshot(lua_State* lua) {
     numberField(lua, "x", area.x);
     numberField(lua, "y", area.y);
     numberField(lua, "height", area.h);
+    boolField(lua, "layoutFullscreen", true);
     return 1;
 }
 
@@ -824,6 +879,7 @@ static int info(lua_State* lua) {
     numberField(lua, "protocolVersion", 2);
     boolField(lua, "addressedCamera", true);
     boolField(lua, "directPan", true);
+    boolField(lua, "layoutFullscreen", true);
     boolField(lua, "ownedRegions", true);
     numberField(lua, "protectedRegionCount", g_barRegions.count(BarClock::now()));
     boolField(lua, "reorder", true);
@@ -854,7 +910,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_afterDrop  = Event::bus()->m_events.window.floating.listen([](PHLWINDOW window) { finishLeadingDrop(window); });
     g_barPressListener = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent event, Event::SCallbackInfo&) { guardBarPress(event); });
 
-    return {"native-tape", "Public scrolling navigation and addressed column editing bridge for Lua", "local", "2.2"};
+    return {"native-tape", "Public scrolling navigation and addressed column editing bridge for Lua", "local", "2.3"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {

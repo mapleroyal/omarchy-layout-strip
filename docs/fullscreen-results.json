@@ -1,0 +1,123 @@
+{
+  "validatedOn": "2026-09-14",
+  "totalCasesPassed": 62,
+  "existingCasesPassed": 54,
+  "hyprlandVersion": "0.56.2",
+  "hyprlandGitHash": "efb50993780079460b0cbed1363e2166a2de1d9f",
+  "aquamarineVersion": "0.15.0",
+  "nativeLibrarySha256": "3d840637774e14b0a17867e60ed8413c4e1d6499eb2cc51390cb1adb201dfa1a",
+  "scope": "Programmatic production Lua gesture entry points, real Foot clients, private two-headless-output Hyprland with an owned headless Weston GL parent.",
+  "physicalTouchpadTested": false,
+  "youtubePlaybackTested": false,
+  "loginCompositorInputTested": false,
+  "physicalOutputBackendEnabled": false,
+  "configErrors": [],
+  "fullscreenCases": [
+    {
+      "case": "fullscreen_follows_fingers_without_focus_change",
+      "initial": {
+        "ok": true,
+        "offset": 720.000042,
+        "rendered": 720.000042,
+        "width": 1428.0
+      },
+      "initialWindowX": 0,
+      "samples": [
+        {
+          "camera": {
+            "ok": true,
+            "offset": 840.000042,
+            "rendered": 840.000042,
+            "width": 1428.0
+          },
+          "windowX": -120,
+          "action": {
+            "ok": true,
+            "changed": true
+          }
+        },
+        {
+          "camera": {
+            "ok": true,
+            "offset": 920.000042,
+            "rendered": 920.000042,
+            "width": 1428.0
+          },
+          "windowX": -200,
+          "action": {
+            "ok": true,
+            "changed": true
+          }
+        }
+      ],
+      "fullscreen": {
+        "fullscreen": 2,
+        "fullscreenClient": 2
+      }
+    },
+    {
+      "case": "fullscreen_cancel_restores_camera_and_focus",
+      "camera": {
+        "ok": true,
+        "offset": 720.000042,
+        "rendered": 720.000042,
+        "width": 1428.0
+      }
+    },
+    {
+      "case": "fullscreen_swipe_away_and_return_preserves_client_mode",
+      "away": {
+        "ok": true,
+        "offset": 2154.000084,
+        "rendered": 2154.000084,
+        "width": 1428.0
+      },
+      "returned": {
+        "ok": true,
+        "offset": 720.000084,
+        "rendered": 720.000084,
+        "width": 1428.0
+      },
+      "fullscreen": {
+        "fullscreen": 2,
+        "fullscreenClient": 2
+      }
+    },
+    {
+      "case": "multiple_fullscreen_columns_pan_without_exiting",
+      "first": {
+        "fullscreen": 2,
+        "fullscreenClient": 2
+      },
+      "second": {
+        "fullscreen": 2,
+        "fullscreenClient": 2
+      }
+    },
+    {
+      "case": "fullscreen_regrab_tracks_rendered_position_and_cancel_goal",
+      "sample": {
+        "ok": true,
+        "oldGoal": 720.000042,
+        "before": 932.865305,
+        "after": 932.865307,
+        "goal": 932.865307
+      },
+      "restored": {
+        "ok": true,
+        "offset": 720.000042,
+        "rendered": 720.000042,
+        "width": 1428.0
+      }
+    },
+    {
+      "case": "fullscreen_camera_keeps_resize_guard"
+    },
+    {
+      "case": "fullscreen_camera_keeps_reorder_guard"
+    },
+    {
+      "case": "default_fullscreen_handler_camera_rejected_without_mutation"
+    }
+  ]
+}

@@ -30,7 +30,8 @@ local function fixture(widths, options)
   local native = {}
   function native.snapshot()
     if c.current ~= c.workspace then return { ok = false } end
-    return { ok = true, width = c.width, offset = c.offset, renderedOffset = c.rendered_offset }
+    return { ok = true, width = c.width, offset = c.offset, renderedOffset = c.rendered_offset,
+      layoutFullscreen = options.layout_fullscreen }
   end
   local function pan(kind, delta, exact, workspace_id, monitor_name)
     c.calls[#c.calls + 1] = { kind = kind, delta = delta, exact = exact,
@@ -363,4 +364,86 @@ c.update(100)
 c.tape.smooth_end({})
 assert(#c.commands == 1 and c.commands[1].direction == "r")
 
-print("Smooth gesture tracking/regrab, animated landing/steps, focus, snap policy, backtracking, cancellation, gutters, edges, stale geometry and bridge compatibility passed")
+-- Fullscreen keeps its monitor-sized column while the camera follows the
+-- fingers. It retains both fullscreen states when we leave and return; no
+-- fullscreen toggle or directional-focus fallback is dispatched.
+local function fullscreen(c, index)
+  c.windows[index].fullscreen = 2
+  c.windows[index].fullscreen_client = 2
+end
+c = fixture({ 1.012, 1 }, { offset = 6, layout_fullscreen = true })
+fullscreen(c, 1)
+c.tape.smooth_begin({})
+assert(c.update(400).changed)
+near(c.offset, 406, "fullscreen must track finger displacement")
+assert(c.active == c.windows[1] and #c.commands == 0)
+c.tape.smooth_end({})
+near(c.offset, 1012)
+assert(c.active == c.windows[2])
+c.tape.smooth_begin({})
+c.update(-80)
+c.tape.smooth_end({})
+near(c.offset, 6, "return must center the monitor-sized fullscreen column")
+assert(c.active == c.windows[1])
+assert(c.windows[1].fullscreen == 2 and c.windows[1].fullscreen_client == 2)
+for _, action in ipairs(c.commands) do assert(not action.direction) end
+
+-- Endpoint and adjacent-column stops inside the fullscreen covering range
+-- describe the same view. A swipe must never get stuck taking a 6px gap step.
+for _, case in ipairs({
+  { widths = { 1.012, 1 }, offset = 6, active = 1, direction = "l" },
+  { widths = { 1, 1.012 }, offset = 1006, active = 2, direction = "r" },
+}) do
+  c = fixture(case.widths, { offset = case.offset, active = case.active, layout_fullscreen = true })
+  fullscreen(c, case.active)
+  assert(not c.tape.browse(case.direction, false).changed)
+  near(c.offset, case.offset)
+  assert(#c.calls == 0 and #c.commands == 0)
+end
+
+-- Adjacent fullscreen windows each remain a single view, including the
+-- intermediate strip-boundary stops contributed by their neighbors.
+c = fixture({ 1.012, 1.012, 1.012 }, { offset = 6, layout_fullscreen = true })
+for i = 1, 3 do fullscreen(c, i) end
+for _, target in ipairs({ 1018, 2030 }) do
+  c.tape.smooth_begin({}); c.update(80); c.tape.smooth_end({})
+  near(c.offset, target)
+end
+assert(not c.tape.browse("r", false).changed)
+for _, target in ipairs({ 1018, 6 }) do
+  c.tape.smooth_begin({}); c.update(-80); c.tape.smooth_end({})
+  near(c.offset, target)
+end
+for _, window in ipairs(c.windows) do assert(window.fullscreen == 2 and window.fullscreen_client == 2) end
+
+-- Cancellation returns to the original fullscreen camera. Regrabbing a
+-- pending return still starts at the visible position, with an animated cancel.
+c = fixture({ 1.012, 1 }, { offset = 6, rendered_offset = 400, layout_fullscreen = true })
+fullscreen(c, 1)
+c.tape.smooth_begin({})
+near(c.offset, 400)
+c.update(60)
+near(c.offset, 460)
+c.tape.smooth_end({ cancelled = true })
+near(c.offset, 6)
+last_kind(c, "animated")
+assert(c.active == c.windows[1] and c.windows[1].fullscreen == 2)
+
+-- Exiting fullscreen with an unchanged width still invalidates the gesture's
+-- saved covering range. Neither release nor cancel may restore stale geometry.
+c = fixture({ 1, 1 }, { layout_fullscreen = true })
+fullscreen(c, 1)
+c.tape.smooth_begin({}); c.update(100)
+c.windows[1].fullscreen = 0
+count = #c.calls
+assert(not c.tape.smooth_end({ cancelled = true }).changed and #c.calls == count)
+
+-- An older bridge that supplies a camera but no fullscreen support still
+-- follows the established fallback, including cancellation without mutation.
+c = fixture({ 1.012, 1 }, { offset = 6 })
+fullscreen(c, 1)
+c.tape.smooth_begin({}); c.update(100); c.tape.smooth_end({ cancelled = true })
+near(c.offset, 6)
+assert(#c.calls == 0 and #c.commands == 0)
+
+print("Smooth gesture tracking/regrab, fullscreen round trips, animated landing/steps, focus, snap policy, backtracking, cancellation, gutters, edges, stale geometry and bridge compatibility passed")

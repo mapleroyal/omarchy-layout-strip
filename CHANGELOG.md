@@ -1,5 +1,7 @@
 # Unreleased
 
+- Allow smooth navigation away from and back to scrolling-managed fullscreen windows while retaining their fullscreen state, with one landing per fullscreen column and cancellation/regrab support.
+- Keep unsupported fullscreen handlers outside native camera operations and add Lua plus private-compositor regression coverage.
 - Restore strip allocation on Omarchy 4.0.3's scoped bar interface so it stays between neighboring widgets and the center clock.
 - Read current-surface slot geometry without accessing the host bar or other plugins' services; retain the older host interface.
 - Keep placement available through the Omarchy CLI and honor the scoped bar's hidden state for polling and input regions.

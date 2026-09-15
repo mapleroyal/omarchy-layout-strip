@@ -297,6 +297,179 @@ def check_bar_browse_pointer():
             assert camera(2,'HEADLESS-2')==other_camera,diagnostic
             cases.append(diagnostic)
 
+def fullscreen_state(title):
+    window = windows()[title]
+    return {field: window[field] for field in ['fullscreen', 'fullscreenClient']}
+
+def set_fullscreen(title, internal=2, client=2):
+    focus(title)
+    result = evaluate('return hl.dispatch(hl.dsp.window.fullscreen_state({window="address:'
+                      + addr(title) + '",internal=' + str(internal) + ',client='
+                      + str(client) + ',action="set"})).ok')
+    assert result == 'true', result
+    wait_for(lambda: fullscreen_state(title) == {'fullscreen': internal, 'fullscreenClient': client})
+
+def rendered_camera(workspace=7):
+    return reply('''(function() local r=hl.plugin.tape.snapshot(''' + str(workspace) + ''',"HEADLESS-1");
+      return string.format('{"ok":%s,"offset":%f,"rendered":%f,"width":%f}',
+        tostring(r.ok),r.offset or 0,r.renderedOffset or 0,r.width or 0) end)()''')
+
+def smooth_action(method, event='{}'):
+    result = reply('''(function() local r=_testTape.smooth_''' + method + '(' + event + ''');
+      return string.format('{"ok":%s,"changed":%s}',tostring(r.ok),tostring(r.changed or false)) end)()''')
+    assert result['ok'], (method, result)
+    return result
+
+def smooth_move(distance):
+    return smooth_action('update', '{delta={x=' + str(-distance) + ',y=0}}')
+
+def check_fullscreen_swipes():
+    workspace, monitor = 7, 'HEADLESS-1'
+    evaluate('hl.config({scrolling={column_width=0.5,fullscreen_on_one_column=false}})')
+    evaluate('return hl.dispatch(hl.dsp.focus({monitor="HEADLESS-1"}))')
+    evaluate('return hl.dispatch(hl.dsp.focus({workspace="7"}))')
+    for suffix in 'abcde': launch('swipe' + suffix)
+    title = 'swipeb'
+    set_fullscreen(title)
+    saved_fullscreen = fullscreen_state(title)
+    original = rendered_camera()
+    assert original['ok'], original
+    assert evaluate('return hl.plugin.tape.snapshot().layoutFullscreen') == 'true'
+    assert evaluate('return _testTape.snapshot() ~= nil') == 'true'
+
+    # The fullscreen client must move during each update while keyboard focus
+    # and both protocol/internal fullscreen states remain intact.
+    before_x = windows()[title]['at'][0]
+    focused = active()
+    events = evaluate('return _focusEvents')
+    (OUT / 'fullscreen-initial.json').write_text(json.dumps({'windows': {name: window
+        for name, window in windows().items() if name.startswith('swipe')},
+        'nativeCamera': original,
+        'tapeGeometry': reply('''(function() local s=_testTape.snapshot();
+          return string.format('{"columns":%d,"extent":%f,"offset":%f}',#s.columns,s.extent,s.offset) end)()'''),
+        'luaWindows': evaluate('local rows={};for _,w in ipairs(hl.get_workspace_windows(hl.get_active_workspace())) do rows[#rows+1]=w.title..":"..tostring(w.hidden)..":"..tostring(w.fullscreen)..":"..tostring(w.layout and w.layout.column and w.layout.column.index) end;return table.concat(rows,"\\n")')}, indent=2))
+    smooth_action('begin')
+    samples = []
+    for distance in [120, 80]:
+        previous = rendered_camera()
+        action = smooth_move(distance)
+        current = rendered_camera()
+        window = windows()[title]
+        samples.append({'camera': current, 'windowX': window['at'][0], 'action': action,
+          'afterGeometry': evaluate('local s=_testTape.snapshot();return s and tostring(s.offset)..":"..tostring(#s.columns)..":"..tostring(s.extent) or "nil"')})
+        assert abs(current['offset'] - previous['offset'] - distance) < .6, samples
+        assert abs(current['rendered'] - current['offset']) < .6, samples
+        assert active() == focused and evaluate('return _focusEvents') == events
+        assert fullscreen_state(title) == saved_fullscreen
+    assert abs(windows()[title]['at'][0] - before_x + 200) <= 1, samples
+    cases.append({'case': 'fullscreen_follows_fingers_without_focus_change',
+                  'initial': original, 'initialWindowX': before_x, 'samples': samples,
+                  'fullscreen': saved_fullscreen})
+
+    smooth_action('end', '{cancelled=true}')
+    restored = rendered_camera()
+    assert abs(restored['offset'] - original['offset']) < .6, (original, restored)
+    assert active() == focused and fullscreen_state(title) == saved_fullscreen
+    assert windows()[title]['at'][0] == before_x
+    cases.append({'case': 'fullscreen_cancel_restores_camera_and_focus', 'camera': restored})
+
+    smooth_action('begin')
+    smooth_move(original['width'])
+    smooth_action('end', '{cancelled=false}')
+    away = rendered_camera()
+    assert active() != focused and fullscreen_state(title) == saved_fullscreen
+    assert away['offset'] > original['offset'] + original['width'] / 2, away
+    smooth_action('begin')
+    smooth_move(original['offset'] - away['offset'])
+    smooth_action('end', '{cancelled=false}')
+    returned = rendered_camera()
+    assert active() == focused and fullscreen_state(title) == saved_fullscreen
+    assert abs(returned['offset'] - original['offset']) < 7, (original, returned)
+    assert windows()[title]['at'][0] == 0 and windows()[title]['size'] == [1440, 900]
+    cases.append({'case': 'fullscreen_swipe_away_and_return_preserves_client_mode',
+                  'away': away, 'returned': returned, 'fullscreen': fullscreen_state(title)})
+
+    # A second fullscreen column remains fullscreen while the other covers the
+    # output. Navigation may not use only the workspace's covering FS window.
+    set_fullscreen('swiped')
+    assert fullscreen_state(title) == saved_fullscreen
+    second_state = fullscreen_state('swiped')
+    second_origin = rendered_camera()
+    smooth_action('begin')
+    smooth_move(-160)
+    assert fullscreen_state(title) == saved_fullscreen
+    assert fullscreen_state('swiped') == second_state
+    assert abs(rendered_camera()['offset'] - second_origin['offset'] + 160) < .6
+    smooth_action('end', '{cancelled=true}')
+    cases.append({'case': 'multiple_fullscreen_columns_pan_without_exiting',
+                  'first': fullscreen_state(title), 'second': second_state})
+
+    # Regrab the rendered location during a native animated cancellation. The
+    # test samples both sides of begin in one IPC request so elapsed animation
+    # time cannot masquerade as a position jump caused by the gesture.
+    focus(title)
+    evaluate('hl.config({animations={enabled=true}});hl.animation({leaf="windowsMove",enabled=true,speed=10,bezier="default"})')
+    resting = rendered_camera()
+    smooth_action('begin')
+    smooth_move(500)
+    smooth_action('end', '{cancelled=true}')
+    time.sleep(.06)
+    regrab = reply('''(function()
+      local before=hl.plugin.tape.snapshot(7,"HEADLESS-1")
+      local r=_testTape.smooth_begin({})
+      local after=hl.plugin.tape.snapshot(7,"HEADLESS-1")
+      return string.format('{"ok":%s,"oldGoal":%f,"before":%f,"after":%f,"goal":%f}',
+        tostring(r.ok),before.offset,before.renderedOffset,after.renderedOffset,after.offset)
+      end)()''')
+    assert regrab['ok'] and abs(regrab['oldGoal'] - regrab['before']) > 10, regrab
+    assert abs(regrab['before'] - regrab['after']) < .6, regrab
+    assert abs(regrab['goal'] - regrab['after']) < .6, regrab
+    smooth_move(40)
+    assert abs(rendered_camera()['offset'] - regrab['after'] - 40) < .6
+    assert fullscreen_state(title) == saved_fullscreen
+    assert fullscreen_state('swiped') == second_state
+    smooth_action('end', '{cancelled=true}')
+    assert abs(rendered_camera()['offset'] - resting['offset']) < .6
+    wait_for(lambda: abs(rendered_camera()['rendered'] - resting['offset']) < 1)
+    evaluate('hl.config({animations={enabled=false}})')
+    cases.append({'case': 'fullscreen_regrab_tracks_rendered_position_and_cancel_goal',
+                  'sample': regrab, 'restored': rendered_camera()})
+
+    # Native edit guards intentionally retain their stronger fullscreen
+    # restriction; camera support does not authorize destructive layout edits.
+    context = ',7,"HEADLESS-1")'
+    for name, expression in [
+        ('resize', 'hl.plugin.tape.resize_column(' + json.dumps(addr('swipec')) + ',0.667' + context),
+        ('reorder', 'hl.plugin.tape.reorder(' + json.dumps(addr('swipec')) + ','
+         + json.dumps(addr('swipee')) + ',"after"' + context)]:
+        before = rendered_camera()
+        assert evaluate('return ' + expression + '.ok') == 'false', name
+        assert rendered_camera() == before
+        cases.append({'case': 'fullscreen_camera_keeps_' + name + '_guard'})
+
+    # A floating fullscreen client uses Hyprland's default fullscreen handler.
+    # Addressing bypasses currentTape's ordinary floating-focus exclusion, so
+    # these checks specifically exercise the fullscreen handler safety guard.
+    evaluate('return hl.dispatch(hl.dsp.focus({workspace="8"}))')
+    launch('unsafe-tile')
+    launch('unsafe-fullscreen')
+    evaluate('return hl.dispatch(hl.dsp.window.float({action="set"}))')
+    set_fullscreen('unsafe-fullscreen')
+    unsafe_state = fullscreen_state('unsafe-fullscreen')
+    before = windows()
+    for operation in ['snapshot(8,"HEADLESS-1")', 'pan(100,false,8,"HEADLESS-1")',
+                      'pan_direct(100,false,8,"HEADLESS-1")']:
+        assert evaluate('return hl.plugin.tape.' + operation + '.ok') == 'false', operation
+    assert evaluate('return _testTape.snapshot() == nil') == 'true'
+    smooth_action('begin')
+    smooth_move(150)
+    smooth_action('end', '{cancelled=true}')
+    assert fullscreen_state('unsafe-fullscreen') == unsafe_state
+    for name in ['unsafe-tile', 'unsafe-fullscreen']:
+        assert windows()[name]['at'] == before[name]['at']
+        assert windows()[name]['size'] == before[name]['size']
+    cases.append({'case': 'default_fullscreen_handler_camera_rejected_without_mutation'})
+
 try:
     with (OUT/'compositor.log').open('w') as log:
         compositor=subprocess.Popen(['Hyprland','--config',str(config)],env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
@@ -405,6 +578,7 @@ try:
                   'windowWidth':windows()['singleton']['size'][0]})
     check_background_widths()
     check_bar_browse_pointer()
+    check_fullscreen_swipes()
     assert not ctl('configerrors'),ctl('configerrors')
     (OUT/'results.json').write_text(json.dumps(cases,indent=2)+'\n')
     print(f'{len(cases)} private two-output compositor cases passed')
