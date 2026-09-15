@@ -31,6 +31,8 @@ end
 
 function M.new(hl, tape, finish_navigation)
   local self = {protocol_version = 2}
+  local snapshot_positions = {}
+  local cycle_positions = setmetatable({}, {__mode = "k"})
 
   local function displayed_workspace(monitor_name)
     local workspace, monitor
@@ -77,13 +79,25 @@ function M.new(hl, tape, finish_navigation)
     return workspace
   end
 
-  local function find_column_window(workspace, address)
+  local function window_cycle_state(window)
+    if type(omarchy_window_width_cycle_state) ~= "function" then return nil end
+    local original = omarchy_window_width_cycle_state(window)
+    local layout = type(original) == "table" and original.layout
+    local column = layout and layout.name == "scrolling" and layout.column
+    if type(original) == "table" and not original.floating and column and type(column.index) == "number" then
+      return original
+    end
+  end
+
+  local function find_column_window(workspace, address, allow_cycle)
     if not valid_address(address) then return nil, "Invalid window address" end
     for _, window in ipairs(hl.get_workspace_windows(workspace)) do
       if window.address:lower() == address:lower() then
         local layout = window.layout
         local column = layout and layout.name == "scrolling" and layout.column
-        if window.mapped and not window.hidden and not window.floating and column and column.index ~= nil then
+        if window.mapped and not window.hidden and
+          ((not window.floating and column and column.index ~= nil)
+            or (allow_cycle and window.floating and window_cycle_state(window))) then
           return window
         end
         return nil, "The window is no longer a visible scrolling column"
@@ -148,11 +162,29 @@ function M.new(hl, tape, finish_navigation)
       end
     end
     if not workspace or workspace.tiled_layout ~= "scrolling" then return result end
-    local by_index = {}
+    local by_index, by_cycle = {}, {}
+    local previous_positions = snapshot_positions[workspace.id] or {}
     for _, window in ipairs(hl.get_workspace_windows(workspace)) do
       local layout = window.layout
       local column = layout and layout.name == "scrolling" and layout.column
-      if window.mapped and not window.hidden and not window.floating and column and column.index ~= nil then
+      local original = window.floating and window_cycle_state(window)
+      if window.mapped and not window.hidden and original then
+        local focused = active and active.address == window.address or false
+        local position = cycle_positions[original]
+        if not position or position.workspace_id ~= workspace.id then
+          position = {workspace_id = workspace.id,
+            index = previous_positions[window.address] or original.layout.column.index}
+          cycle_positions[original] = position
+        end
+        if not by_cycle[original] or focused then
+          by_cycle[original] = {
+            index = position.index, address = window.address, class = window.class or "",
+            title = window.title or "", width = original.stage == 1 and 2 / 3
+              or original.stage == 2 and 0.5 or original.layout.column.width or 0.5,
+            focused = focused, fullscreen = false, cycled = true, cycleStage = original.stage,
+          }
+        end
+      elseif window.mapped and not window.hidden and not window.floating and column and column.index ~= nil then
         local focused = active and active.address == window.address or false
         local existing = by_index[column.index]
         -- A focused stack member can stand for the column; stacking has no UI.
@@ -167,8 +199,27 @@ function M.new(hl, tape, finish_navigation)
     end
     for _, column in pairs(by_index) do columns[#columns + 1] = column end
     table.sort(columns, function(a, b) return a.index < b.index end)
-    for _, column in ipairs(columns) do
-      if column.fullscreen or (#columns == 1 and hl.get_config("scrolling.fullscreen_on_one_column")) then
+    -- Floating a column shifts every later native index. Insert placeholders
+    -- into the live order rather than keying both kinds by those colliding
+    -- indices. Remember the previous logical position for successive cycles.
+    local cycled = {}
+    for _, column in pairs(by_cycle) do cycled[#cycled + 1] = column end
+    if #cycled > 0 then result.reorderAvailable = false end
+    table.sort(cycled, function(a, b)
+      return a.index == b.index and a.address < b.address or a.index < b.index
+    end)
+    local last_position = 0
+    for _, column in ipairs(cycled) do
+      local position = math.min(#columns + 1, math.max(last_position + 1, column.index + 1))
+      table.insert(columns, position, column)
+      last_position = position
+    end
+    local positions = {}
+    snapshot_positions[workspace.id] = positions
+    for position, column in ipairs(columns) do
+      positions[column.address] = position - 1
+      if #cycled > 0 then column.index = position - 1 end
+      if not column.cycled and (column.fullscreen or (#columns == 1 and hl.get_config("scrolling.fullscreen_on_one_column"))) then
         column.width = 1
       end
       column.size = column.width < (0.5 + 0.667) / 2 and "small"
@@ -230,7 +281,18 @@ function M.new(hl, tape, finish_navigation)
   end
 
   function self.focus(address, workspace_id, monitor_name)
-    return action_reply(function() return finish_navigation(tape.jump(address, workspace_id, monitor_name)) end)
+    return action_reply(function()
+      if monitor_name then
+        local workspace, reason = action_workspace(workspace_id, monitor_name)
+        if not workspace then return {ok=false,error=reason} end
+        local window, window_error = find_column_window(workspace, address, true)
+        if not window then return {ok=false,error=window_error} end
+        if window.floating then
+          return finish_navigation(hl.dispatch(hl.dsp.focus({window=window})))
+        end
+      end
+      return finish_navigation(tape.jump(address, workspace_id, monitor_name))
+    end)
   end
 
   function self.reorder(address, target_address, side, workspace_id, monitor_name)
@@ -264,11 +326,59 @@ function M.new(hl, tape, finish_navigation)
     return action_reply(function()
       local workspace, reason = action_workspace(workspace_id, monitor_name)
       if not workspace then return { ok = false, error = reason } end
-      local window, window_error = find_column_window(workspace, address)
+      local window, window_error = find_column_window(workspace, address, true)
       if not window then return { ok = false, error = window_error } end
       -- Match four-finger swipe-down: request an ordinary client close, with
       -- existing close lifecycle geometry repair and normal app save prompts.
       return finish_navigation(hl.dispatch(hl.dsp.window.close({ window = "address:" .. window.address })))
+    end)
+  end
+
+  function self.cycle_width(address, workspace_id, monitor_name)
+    return action_reply(function()
+      local workspace, reason = action_workspace(workspace_id, monitor_name)
+      if not workspace then return { ok = false, error = reason } end
+      local window, window_error = find_column_window(workspace, address)
+      if not window then return { ok = false, error = window_error } end
+      if window.fullscreen ~= 0 then return { ok = false, error = "Leave fullscreen before changing column width" } end
+      -- Read the live column width, not the tile's potentially older snapshot.
+      -- Use the same three size buckets the strip displays for custom widths.
+      local width = window.layout.column.width or 0.5
+      local next_width = width < (0.5 + 0.667) / 2 and 0.667
+        or width < (0.667 + 1) / 2 and 1 or 0.5
+      local native = bridge()
+      local info = native and native.info and native.info()
+      if type(info) ~= "table" or info.ok ~= true or info.protocolVersion ~= 2 or info.addressedResize ~= true
+        or type(native.resize_column) ~= "function" then
+        return { ok = false, error = "The native tape bridge needs addressed column resizing support" }
+      end
+      -- Editing a tile must never invoke navigation or its pointer-refocus
+      -- callback. The native action retains focus and anchors the visible view.
+      local result = native.resize_column(window.address, next_width, workspace_id, monitor_name)
+      if type(result) == "table" and result.ok == true and result.changed ~= false then tape.invalidate_workspace(workspace_id) end
+      return result
+    end)
+  end
+
+  function self.cycle_window(address, workspace_id, monitor_name, direction)
+    return action_reply(function()
+      if direction == nil then direction = 1 end
+      if direction ~= 1 and direction ~= -1 then return {ok=false,error="Cycle direction must be 1 or -1"} end
+      local workspace, reason = action_workspace(workspace_id, monitor_name)
+      if not workspace then return {ok=false,error=reason} end
+      local window, window_error = find_column_window(workspace, address, true)
+      if not window then return {ok=false,error=window_error} end
+      if type(omarchy_cycle_window_width) ~= "function" then
+        return {ok=false,error="The Super+O window cycle is unavailable"}
+      end
+      -- Capture its logical strip position before the shared keyboard helper
+      -- removes the tiled column. The helper also preserves focus and cursor.
+      snapshot_data(monitor_name)
+      local result = omarchy_cycle_window_width(window, direction)
+      if type(result) == "table" and result.ok == true and result.changed ~= false then
+        tape.invalidate_workspace(workspace_id)
+      end
+      return result
     end)
   end
 

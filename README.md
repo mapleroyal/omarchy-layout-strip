@@ -9,19 +9,27 @@ remove that shared dependency.
 See the [implementation and validation report](docs/implementation.md)
 for completed fixes, measurements and installation results.
 
-An icon represents one tiled column in the displayed workspace. Hover shows
+An icon represents one tiled column in the displayed workspace, or a window
+temporarily floated through the Super+O cycle. Hover shows
 the window title. There is no window-thumbnail or video-preview feature.
 Internal references to the **camera** mean the desktop's horizontal scroll
 position—which columns are visible—not a thumbnail or recording device.
 
 ## Interaction
 
-- Click an icon to focus its window and align the column's left edge where the
-  layout permits. Middle-click an icon or use its right-click menu to close that
-  window without first focusing it. Apps can show their usual unsaved-work prompt.
+- Click an icon to focus its window, scrolling only as far as needed to bring
+  its column into view. Right-click an icon to cycle its column's width through
+  half, two-thirds, full, then half again, keeping keyboard focus and the pointer
+  in place. Middle-click an icon to
+  close its window without first focusing it; apps can show their usual unsaved-work prompt.
 - Drag an icon to reorder whole columns; release outside or right-click during
   the drag to cancel. Hovering near the strip ends scrolls only the strip.
-- Scroll overflow with wheel, trackpad or arrows. The arrow menu switches between
+- Scroll down over a tile to advance the custom Super+O cycle: original layout,
+  centered floating two-thirds width, half width, then restore. Scroll up reverses
+  the cycle. The floating window keeps its tile, and keyboard and wheel actions
+  share the same saved original state in the user's Hyprland bindings.
+- Scroll overflow horizontally with a wheel or trackpad, or vertically over
+  blank space and arrows. The arrow menu switches between
   hover scrolling and click/hold scrolling.
 - Right-click blank space or an arrow for settings, width reset and placement.
   Drag either narrow edge to resize around the strip's fixed center.

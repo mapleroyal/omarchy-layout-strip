@@ -32,6 +32,51 @@ struct Plan {
     bool anchorPreserved = true;
 };
 
+// A background width change retains a visible focused column's position, or
+// the largest visible unchanged column when keyboard focus belongs elsewhere.
+// It never reveals an offscreen focus/resize target as an incidental action.
+inline Plan resizePlan(const std::vector<double>& widths, double viewport, double offset,
+                       size_t source, double newWidth, std::optional<size_t> focused) {
+    if (widths.empty() || source >= widths.size() || (focused && *focused >= widths.size()) ||
+        !std::isfinite(viewport) || viewport <= 0 || !std::isfinite(offset) || !std::isfinite(newWidth) || newWidth <= 0)
+        throw std::invalid_argument("invalid resize geometry");
+    std::vector<double> starts(widths.size());
+    double total = 0;
+    for (size_t i = 0; i < widths.size(); ++i) {
+        if (!std::isfinite(widths[i]) || widths[i] <= 0)
+            throw std::invalid_argument("invalid column width");
+        starts[i] = total;
+        total += widths[i];
+    }
+    const double delta = newWidth - widths[source], newTotal = total + delta;
+    if (!std::isfinite(total) || !std::isfinite(newTotal))
+        throw std::invalid_argument("invalid tape extent");
+    const auto overlap = [&](size_t i) {
+        return std::max(0.0, std::min(starts[i] + widths[i], offset + viewport) - std::max(starts[i], offset));
+    };
+    Plan result;
+    result.offset = offset;
+    if (focused && overlap(*focused) > 0.5)
+        result.anchor = focused;
+    else {
+        double best = 0.5;
+        for (size_t i = 0; i < widths.size(); ++i) {
+            if (i != source && overlap(i) > best) {
+                best = overlap(i);
+                result.anchor = i;
+            }
+        }
+    }
+    const double anchorShift = result.anchor && *result.anchor > source ? delta : 0;
+    result.offset += anchorShift;
+    const auto minimum = [&](double extent) { return extent < viewport ? std::round((extent - viewport) / 2) : 0.; };
+    const double oldMin = minimum(total), oldMax = std::max(oldMin, total - viewport);
+    const double newMin = minimum(newTotal), newMax = std::max(newMin, newTotal - viewport);
+    result.offset = std::clamp(result.offset, newMin + std::min(0., offset - oldMin), newMax + std::max(0., offset - oldMax));
+    result.anchorPreserved = !result.anchor || std::abs(result.offset - offset - anchorShift) < 0.5;
+    return result;
+}
+
 // Geometry uses native primary-axis strip sizes and camera goals, independently
 // of the clients' animated positions. Identifiers are original vector indices.
 inline Plan plan(const std::vector<double>& widths, double viewport, double offset,

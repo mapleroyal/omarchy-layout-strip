@@ -222,11 +222,11 @@ ShellRoot {
           check(widget.scrollDirection===0 && closeEnough(widget.scrollOffset,heldOffset),"Releasing click immediately stops scroll");
           check(hostPresses===0,"Host drag MouseArea did not steal pointer input");
           widget.setOffset(100,false);
-          check(events.mouseWheel(widget,widget.width/2,widget.height/2,Qt.NoButton,Qt.NoModifier,0,120,1),"QTest vertical wheel event delivered");
+          check(events.mouseWheel(rightArrow,rightArrow.width/2,rightArrow.height/2,Qt.NoButton,Qt.NoModifier,0,120,1),"QTest vertical wheel event delivered over an arrow");
           break;
         case 6:
           check(closeEnough(widget.scrollOffset,100-widget.iconSize*3),"Wheel up scrolls left through real MouseArea event");
-          check(events.mouseWheel(widget,widget.width/2,widget.height/2,Qt.NoButton,Qt.NoModifier,0,-120,1),"QTest wheel down delivered");
+          check(events.mouseWheel(rightArrow,rightArrow.width/2,rightArrow.height/2,Qt.NoButton,Qt.NoModifier,0,-120,1),"QTest wheel down delivered over an arrow");
           break;
         case 7:
           check(closeEnough(widget.scrollOffset,100),"Wheel down scrolls right");
@@ -259,7 +259,7 @@ ShellRoot {
           if(partial) {
             var visibleStart=widget.scrollOffset-partial.x;
             check(events.mouseClick(partial,visibleStart+(partial.width-visibleStart)/2,partial.height/2,Qt.RightButton,Qt.NoModifier,1),"QTest partial tile right-click delivered");
-            check(widget.menuOpen && widget.menuAnchor===partial,"Visible part of clipped tile still opens menu on real click");
+            check(widget.lastCommand[1]==="cycle_width" && widget.lastCommand[2]===partial.modelData.address && !widget.menuOpen,"Visible part of clipped tile still cycles its width on real click");
             widget.close();
           }
           widget.applySnapshot(harness.snapshot(12,-1,2));
@@ -339,13 +339,46 @@ ShellRoot {
           break;
         case 18:
           var first=allTiles()[0];
-          check(!widget.overflow,"App menu access tested without overflow");
-          check(events.mouseClick(first,first.width/2,first.height/2,Qt.RightButton,Qt.NoModifier,1),"QTest right-click on app icon delivered");
-          check(widget.menuOpen && widget.menuKind==="app" && widget.menuItems.length===1 && widget.menuItems[0].label==="Close","App context menu contains only Close");
-          check(fakeBar.activePopout!==widget,"App context menu also omits widget panel underline");
-          widget.chooseMenuItem(0);
-          check(widget.lastCommand[1]==="close" && widget.lastCommand[2]==="0x1" && widget.lastCommand.indexOf("focus")<0,"Close targets clicked inactive address without focus");
-          check(!widget.menuOpen,"Close dismisses popup");
+          check(!widget.overflow,"Tile width cycle tested without overflow");
+          requestedCommands=[];
+          events.mousePress(first,first.width/2,first.height/2,Qt.RightButton,Qt.NoModifier,1);
+          check(requestedCommands.length===0,"Right press waits for click release before cycling width");
+          events.mouseRelease(first,first.width/2,first.height/2,Qt.RightButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="cycle_width" && widget.lastCommand[2]==="0x1" &&
+            widget.lastCommand[4]==="4" && widget.lastCommand[6]===widget.monitorName,"Right click cycles exactly the clicked column in its current workspace");
+          check(!widget.menuOpen,"Right click cycles width without a popup");
+          requestedCommands=[];
+          heldOffset=widget.scrollOffset;
+          check(events.mouseWheel(first,first.width/2,first.height/2,Qt.NoButton,Qt.NoModifier,0,-120,1),"QTest tile wheel down delivered");
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="cycle_window" && widget.lastCommand[2]==="0x1" &&
+            widget.lastCommand[4]==="4" && widget.lastCommand[6]===widget.monitorName && widget.lastCommand[8]==="1",
+            "Wheel down advances Super+O on the hovered tile even without overflow");
+          check(events.mouseWheel(first,first.width/2,first.height/2,Qt.NoButton,Qt.NoModifier,0,120,1),"QTest tile wheel up delivered");
+          check(requestedCommands.length===2 && widget.lastCommand[8]==="-1" && closeEnough(widget.scrollOffset,heldOffset),
+            "Wheel up reverses the window cycle without scrolling the strip");
+          var wheelEvent={pixelDelta:{x:0,y:0},angleDelta:{x:0,y:-40},inverted:false,buttons:0,accepted:false};
+          widget.tileWheel(first.modelData,wheelEvent);
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(wheelEvent.accepted && requestedCommands.length===2,"Fine wheel movement waits for a complete notch");
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===3 && widget.lastCommand[8]==="1","Fine wheel deltas accumulate into one forward step");
+          wheelEvent.pixelDelta.y=-Style.space(30); wheelEvent.angleDelta.y=0;
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===3,"Trackpad movement waits for its threshold");
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===4,"Trackpad threshold advances exactly one step");
+          wheelEvent.pixelDelta.y=0; wheelEvent.angleDelta.y=120; wheelEvent.inverted=true;
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===5 && widget.lastCommand[8]==="1","Mouse wheel direction compensates for inverted delivery");
+          widget.actionBusy=true;
+          events.mouseWheel(first,first.width/2,first.height/2,Qt.NoButton,Qt.NoModifier,0,120,1);
+          widget.actionBusy=false;
+          widget.resizing=true;
+          events.mouseWheel(first,first.width/2,first.height/2,Qt.NoButton,Qt.NoModifier,0,120,1);
+          widget.resizing=false;
+          wheelEvent.buttons=Qt.LeftButton;
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===5,"Busy, resize, and held-button wheel input cannot cycle a window");
           var strip=named("layoutStrip");
           check(events.mouseClick(strip,widget.endSpace+2,strip.height/2,Qt.RightButton,Qt.NoModifier,1),"Right-click blank padding delivered");
           check(widget.menuOpen && widget.menuKind==="general" && widget.menuItems.length===6,"Blank padding opens general settings");
@@ -353,17 +386,23 @@ ShellRoot {
           var firstTarget=fakeBar.clickTargets.filter(function(target){return target.objectName==="layoutTileTarget" && target.tileItem===first;})[0];
           check(fakeBar.clickTargets.indexOf(firstTarget)>fakeBar.clickTargets.indexOf(strip),"App forwarding target outranks broad padding target");
           firstTarget.triggerPress(Qt.RightButton);
-          check(widget.menuKind==="app" && widget.menuAddress==="0x1","Popup forwarding right-click reaches exact app context");
-          widget.close();
-          widget.openAppMenu(allTiles()[2],allTiles()[2].modelData);
-          widget.close();
+          check(widget.lastCommand[1]==="cycle_width" && widget.lastCommand[2]==="0x1" && !widget.menuOpen,"Popup forwarding right-click cycles the addressed column");
+          widget.actionBusy=true;
+          requestedCommands=[];
+          firstTarget.triggerPress(Qt.RightButton);
+          check(requestedCommands.length===0 && !widget.pendingFocus,"Busy width cycle is not queued or converted to focus");
+          widget.actionBusy=false;
+          widget.resizing=true;
+          firstTarget.triggerPress(Qt.RightButton);
+          check(requestedCommands.length===0,"Forwarded width cycle is suppressed during resize");
+          widget.resizing=false;
           requestedCommands=[];
           events.mousePress(first,first.width/2,first.height/2,Qt.MiddleButton,Qt.NoModifier,1);
           check(requestedCommands.length===0,"Middle press waits for click release before closing");
           events.mouseRelease(first,first.width/2,first.height/2,Qt.MiddleButton,Qt.NoModifier,1);
           check(requestedCommands.length===1 && requestedCommands[0][1]==="close" && requestedCommands[0][2]==="0x1" &&
             requestedCommands[0][4]==="4" && requestedCommands[0][6]===widget.monitorName,
-            "Middle click closes exactly the inactive clicked window in its current workspace, not the stale menu target");
+            "Middle click closes exactly the inactive clicked window in its current workspace");
           check(!widget.menuOpen && widget.snapshot.activeAddress==="0x2","Middle close neither focuses the window nor opens a menu");
           requestedCommands=[];
           firstTarget.triggerPress(Qt.MiddleButton);
@@ -427,6 +466,31 @@ ShellRoot {
           widget.applySnapshot(snapshot(3,1,4));
           break;
         case 23:
+          // Both boundaries around the source leave it in the same place,
+          // including the strip's outside edges for the first and last app.
+          for (var sourceIndex=0;sourceIndex<3;sourceIndex++) {
+            var source=allTiles()[sourceIndex];
+            for (var side=0;side<2;side++) {
+              var sourceX=side===0?2:source.width-2;
+              var commandCount=requestedCommands.length;
+              var label="Source "+sourceIndex+" boundary "+(sourceIndex+side);
+              events.mousePress(source,source.width/2,source.height/2,Qt.LeftButton,Qt.NoModifier,1);
+              events.mouseMove(source,sourceX,source.height/2,1,Qt.LeftButton,Qt.NoModifier);
+              check(widget.dragging && named("dragGhost").visible && widget.dropTarget &&
+                widget.dropTarget.boundary===sourceIndex+side && !named("dropMarker").visible,
+                label+" hides the no-op insertion marker while retaining the drag ghost");
+              var destination=allTiles()[sourceIndex===2?0:2];
+              var changePoint=destination.mapToItem(source,sourceIndex===2?2:destination.width-2,destination.height/2);
+              events.mouseMove(source,changePoint.x,changePoint.y,1,Qt.LeftButton,Qt.NoModifier);
+              check(widget.dropTarget && widget.dropTarget.changed && named("dropMarker").visible,
+                label+" shows a marker when moved to a different position");
+              events.mouseMove(source,sourceX,source.height/2,1,Qt.LeftButton,Qt.NoModifier);
+              check(!named("dropMarker").visible,label+" hides the marker again on return");
+              events.mouseRelease(source,sourceX,source.height/2,Qt.LeftButton,Qt.NoModifier,1);
+              check(!widget.dragging && requestedCommands.length===commandCount,
+                label+" releases without reorder or focus navigation");
+            }
+          }
           var first=allTiles()[0], last=allTiles()[2];
           priorTile=first;
           priorWidth=widget.lastCommand.length;
@@ -530,18 +594,20 @@ ShellRoot {
         case 30:
           events.mouseRelease(widget,pressPosition.x,pressPosition.y,Qt.LeftButton,Qt.NoModifier,1);
           check(widget.lastCommand[1]==="focus" && widget.lastCommand[2]==="0x2","Release after metadata refresh still focuses the pressed app");
-          widget.openAppMenu(priorTile,priorTile.modelData);
+          widget.openMenu(named("layoutStrip"));
           var next=snapshot(3,0,10); next.columns[1].title="Menu target title changed";
           widget.applySnapshot(next);
           break;
         case 31:
-          check(widget.menuOpen && widget.menuAnchor===priorTile && tileFor("0x2")===priorTile,"App menu anchor survives metadata refresh across frames");
+          check(widget.menuOpen && widget.menuAnchor===named("layoutStrip") && tileFor("0x2")===priorTile,"Settings menu and tile identity survive metadata refresh across frames");
           check(priorTile.modelData.title==="Menu target title changed","Stable delegate receives updated title data");
           var next=snapshot(3,0,10); next.columns.reverse();
           widget.applySnapshot(next);
           check(tileFor("0x2")===priorTile,"Address-keyed move retains delegates on compositor reorder");
           widget.applySnapshot(snapshot(1,0,10));
-          check(!widget.menuOpen,"Closing the menu target dismisses its stale app menu");
+          check(widget.menuOpen,"Removing a tile retains the strip settings menu");
+          widget.applySnapshot(snapshot(1,0,11));
+          check(!widget.menuOpen,"Workspace change dismisses the strip settings menu");
           widget.applySnapshot(snapshot(12,0,10));
           break;
         case 32:
@@ -608,6 +674,28 @@ ShellRoot {
           break;
         case 39:
           check(closeEnough(widget.scrollOffset,widget.iconSize*3),"A short arrow click advances exactly one step without a hold increment");
+          widget.setOffset(0,false);
+          var next=snapshot(12,0,12); next.columns[0].size="large";
+          widget.applySnapshot(next);
+          break;
+        case 40:
+          var first=tileFor("0x1");
+          pressPosition=first.mapToItem(widget,first.width-2,first.height/2);
+          move(widget,pressPosition.x,pressPosition.y);
+          requestedCommands=[];
+          events.mouseWheel(widget,pressPosition.x,pressPosition.y,Qt.NoButton,Qt.NoModifier,0,-120,1);
+          check(widget.lastCommand[2]==="0x1","Initial wheel targets the wide tile under the pointer");
+          var next=snapshot(12,0,12); next.columns[0].cycled=true;
+          widget.applySnapshot(next);
+          break;
+        case 41:
+          events.mouseWheel(widget,pressPosition.x,pressPosition.y,Qt.NoButton,Qt.NoModifier,0,-120,1);
+          check(requestedCommands.length===2 && widget.lastCommand[2]==="0x1",
+            "After tile shrink, a wheel delivered to its neighbor keeps the stationary pointer's original target");
+          var second=tileFor("0x2");
+          move(second,second.width/4,second.height/2);
+          events.mouseWheel(second,second.width/4,second.height/2,Qt.NoButton,Qt.NoModifier,0,-120,1);
+          check(widget.lastCommand[2]==="0x2","Moving the pointer selects a new wheel target");
           finish();
           break;
         }

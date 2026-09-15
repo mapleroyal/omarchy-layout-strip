@@ -6,6 +6,31 @@ static void near(double a, double b) { assert(std::abs(a - b) < 1e-8); }
 
 int main() {
     using TapeReorder::plan;
+    using TapeReorder::resizePlan;
+    // Resizing an offscreen predecessor keeps the visible focused window in
+    // place; a target to its right leaves both focus geometry and camera still.
+    auto resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1000, 0, 667, 2);
+    near(resize.offset, 1167); assert(resize.anchor == 2 && resize.anchorPreserved);
+    resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1000, 4, 1000, 2);
+    near(resize.offset, 1000); assert(resize.anchorPreserved);
+    // Focus elsewhere uses the largest unchanged visible tile as an anchor.
+    resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1000, 0, 1000, std::nullopt);
+    near(resize.offset, 1500); assert(resize.anchor == 2 && resize.anchorPreserved);
+    // Resizing an already focused target is also background editing: no fit.
+    resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1100, 2, 1000, 2);
+    near(resize.offset, 1100);
+    // Shrinking the last column normalizes the right edge only as required.
+    resize = resizePlan({500, 500, 1000}, 1000, 1000, 2, 500, 1);
+    near(resize.offset, 500);
+    resize = resizePlan({500, 500}, 1000, 0, 1, 250, std::nullopt);
+    near(resize.offset, -125);
+    // Explicit half-placement margins survive the size edit.
+    resize = resizePlan({500, 500, 500}, 1000, -100, 2, 1000, 0);
+    near(resize.offset, -100);
+    bool rejectedResize = false;
+    try { resizePlan({500}, 1000, 0, 2, 500, std::nullopt); }
+    catch (const std::invalid_argument&) { rejectedResize = true; }
+    assert(rejectedResize);
     const std::vector<double> widths{500, 667, 1000, 500, 667, 500, 1000};
     // Offscreen changes on one side leave the visible app and camera untouched.
     auto p = plan(widths, 1000, 1167, 5, 6, true, 2);

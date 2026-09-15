@@ -17,6 +17,19 @@ assert.equal(focus.kind, 'focus');
 assert.equal(focus.workspaceId, -99);
 assert.deepEqual(focus.command.slice(0, 2), ['hyprctl', 'repl']);
 assert.ok(focus.command[2].includes(P.luaString('0xabcd')));
+const cycle = P.parseAction(['ignored', 'cycle_width', '0xAB', '--workspace', '4', '--monitor', 'DP-2']);
+assert.equal(cycle.kind, 'cycle_width');
+assert.ok(cycle.command[2].endsWith('api.cycle_width(' + P.luaString('0xab') + ',4,' + P.luaString('DP-2') + ')'));
+for (const direction of [undefined, '1', '-1']) {
+ const args = ['ignored', 'cycle_window', '0xAB', '--workspace', '4', '--monitor', 'DP-2'];
+ if (direction !== undefined) args.push('--direction', direction);
+ const windowCycle = P.parseAction(args);
+ assert.equal(windowCycle.kind, 'cycle_window');
+ assert.ok(windowCycle.command[2].endsWith('api.cycle_window(' + P.luaString('0xab') + ',4,' +
+  P.luaString('DP-2') + ',' + (direction || '1') + ')'));
+}
+for (const direction of ['0', '2', '-2', '1.0', '1;bad()', '', true, null])
+ assert.throws(() => P.parseAction(['ignored', 'cycle_window', '0x1', '--workspace', '1', '--monitor', 'eDP-1', '--direction', direction]));
 for (const args of [
  ['ignored', 'focus', '0x1'],
  ['ignored', 'focus', '0x1', '--workspace', '', '--monitor', 'eDP-1'],
@@ -24,6 +37,12 @@ for (const args of [
  ['ignored', 'focus', '0x1', '--workspace', '1', '--monitor', 'eDP-1', '--monitor', 'DP-2'],
  ['ignored', 'focus', '0x1', '--workspace', '1', '--monitor', 'eDP-1', '--target', '0x2'],
  ['ignored', 'close', '0x1;bad()', '--workspace', '1', '--monitor', 'eDP-1'],
+ ['ignored', 'cycle_width', '0x1', '--workspace', '1'],
+ ['ignored', 'cycle_width', '0x1;bad()', '--workspace', '1', '--monitor', 'eDP-1'],
+ ['ignored', 'cycle_width', '0x1', '--workspace', '1', '--monitor', 'eDP-1', '--side', 'before'],
+ ['ignored', 'cycle_width', '0x1', '--workspace', '1', '--monitor', 'eDP-1', '--direction', '1'],
+ ['ignored', 'cycle_window', '0x1', '--workspace', '1'],
+ ['ignored', 'cycle_window', '0x1', '--workspace', '1', '--monitor', 'eDP-1', '--direction', '1', '--direction', '-1'],
  ['ignored', 'reorder', '0x1', '--workspace', '1', '--monitor', 'eDP-1', '--target', '0x2', '--side', 'inside'],
  ['ignored', 'exec', '0x1', '--workspace', '1', '--monitor', 'eDP-1']
 ]) assert.throws(() => P.parseAction(args), JSON.stringify(args));

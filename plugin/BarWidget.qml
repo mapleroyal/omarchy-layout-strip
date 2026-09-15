@@ -24,9 +24,6 @@ BarWidget {
   property real geometryGap: 0
   property var placement: ({allocation: 0})
   property string menuKind: "general"
-  property string menuAddress: ""
-  property int menuWorkspace: 0
-  property string menuMonitor: ""
   property string placementRegion: "left"
   property var placementChoices: []
   property var deferredSnapshot: null
@@ -64,6 +61,13 @@ BarWidget {
   signal actionRequested(var command)
   property int scrollDirection: 0
   property double lastFrame: 0
+  property string wheelCycleTarget: ""
+  property real wheelCycleDelta: 0
+  property bool wheelCyclePixels: false
+  property double wheelCycleTime: 0
+  property string wheelAnchorAddress: ""
+  property int wheelAnchorWorkspace: 0
+  property point wheelAnchorPoint: Qt.point(0, 0)
 
   readonly property var columns: snapshot.columns || []
   property var surface: root.QsWindow.window
@@ -178,9 +182,7 @@ BarWidget {
     if (signature === lastSnapshot) return;
     var changedWorkspace = data.workspaceId !== lastWorkspace;
     var changedFocus = data.activeAddress !== lastFocused;
-    if (menuOpen && (changedWorkspace || (menuKind === "app" && !data.columns.some(function(column) {
-      return column.address === menuAddress;
-    })))) { close(); menuAnchor = null; }
+    if (menuOpen && changedWorkspace) { close(); menuAnchor = null; }
     syncColumns(data.columns);
     snapshot = data;
     lastSnapshot = signature;
@@ -236,22 +238,69 @@ BarWidget {
 
   function focusColumn(column) {
     if (dragging || resizing || !column || !Model.validAddress(column.address)) return;
+    clearWheelAnchor();
     close();
     runAction([helper, "focus", column.address, "--workspace", String(snapshot.workspaceId), "--monitor", monitorName]);
   }
 
   function closeColumn(column) {
-    if (dragging || resizing) return;
-    var address = column ? column.address : menuAddress;
-    var workspace = column ? snapshot.workspaceId : menuWorkspace;
-    var monitor = column ? monitorName : menuMonitor;
+    if (dragging || resizing || !column || !Model.validAddress(column.address)) return;
+    clearWheelAnchor();
     close();
-    if (!Model.validAddress(address)) return;
-    runAction([helper, "close", address, "--workspace", String(workspace), "--monitor", monitor]);
+    runAction([helper, "close", column.address, "--workspace", String(snapshot.workspaceId), "--monitor", monitorName]);
+  }
+
+  function cycleColumnWidth(column) {
+    if (dragging || resizing || !column || !Model.validAddress(column.address)) return;
+    clearWheelAnchor();
+    close();
+    runAction([helper, "cycle_width", column.address, "--workspace", String(snapshot.workspaceId), "--monitor", monitorName]);
+  }
+
+  function cycleWindow(column, direction) {
+    if (dragging || resizing || !column || !Model.validAddress(column.address)) return;
+    close();
+    runAction([helper, "cycle_window", column.address, "--workspace", String(snapshot.workspaceId),
+      "--monitor", monitorName, "--direction", String(direction)]);
+  }
+
+  function tileWheel(column, event) {
+    var pixels = !!(event.pixelDelta.x || event.pixelDelta.y);
+    var horizontal = pixels ? Math.abs(event.pixelDelta.x) > Math.abs(event.pixelDelta.y)
+      : Math.abs(event.angleDelta.x) > Math.abs(event.angleDelta.y);
+    if (horizontal) {
+      wheelCycleDelta = 0;
+      scrollWheel(event);
+      return;
+    }
+    event.accepted = true;
+    if (dragging || resizing || operationBusy || backendStale || event.buttons || !column) {
+      wheelCycleDelta = 0;
+      return;
+    }
+    var delta = Model.wheelStep(event.pixelDelta.x, event.pixelDelta.y,
+      event.angleDelta.x, event.angleDelta.y, event.inverted, !pixels, 120);
+    if (!delta) return;
+    var target = String(snapshot.workspaceId) + ":" + column.address;
+    var now = Date.now();
+    if (target !== wheelCycleTarget || pixels !== wheelCyclePixels || now - wheelCycleTime > 350 ||
+        wheelCycleDelta * delta < 0) wheelCycleDelta = 0;
+    wheelCycleTarget = target;
+    wheelCyclePixels = pixels;
+    wheelCycleTime = now;
+    wheelCycleDelta += delta;
+    // Accumulate fine wheel/trackpad deltas instead of cycling on every tiny
+    // update. One event advances at most one stage, even after a fast flick.
+    if (Math.abs(wheelCycleDelta) >= (pixels ? Style.space(60) : 120)) {
+      var direction = wheelCycleDelta > 0 ? 1 : -1;
+      wheelCycleDelta = 0;
+      cycleWindow(column, direction);
+    }
   }
 
   function beginDrag(column, point) {
     if (!canReorder || resizing || menuOpen) return false;
+    clearWheelAnchor();
     glide.stop();
     scrollDirection = 0;
     dragColumn = column;
@@ -306,6 +355,7 @@ BarWidget {
 
   function beginResize() {
     if (dragging || operationBusy) return;
+    clearWheelAnchor();
     close();
     glide.stop();
     scrollDirection = 0;
@@ -382,7 +432,39 @@ BarWidget {
     else scrollOffset = next;
   }
 
-  function wheel(event) {
+  function clearWheelAnchor() {
+    wheelAnchorAddress = "";
+    wheelCycleDelta = 0;
+  }
+
+  function wheel(event, source, column) {
+    var pixels = !!(event.pixelDelta.x || event.pixelDelta.y);
+    var horizontal = pixels ? Math.abs(event.pixelDelta.x) > Math.abs(event.pixelDelta.y)
+      : Math.abs(event.angleDelta.x) > Math.abs(event.angleDelta.y);
+    if (horizontal || !source) {
+      clearWheelAnchor();
+      scrollWheel(event);
+      return;
+    }
+    var point = source.mapToItem(root, event.x, event.y);
+    if (wheelAnchorWorkspace !== snapshot.workspaceId ||
+        Math.abs(point.x - wheelAnchorPoint.x) > 1 || Math.abs(point.y - wheelAnchorPoint.y) > 1)
+      clearWheelAnchor();
+    var anchored = columns.find(function(item) { return item.address === wheelAnchorAddress; });
+    if (!anchored) clearWheelAnchor();
+    column = anchored || column;
+    if (column) {
+      // Width changes can move a neighboring tile under a stationary pointer.
+      // Keep scrolling the original address until the pointer moves, even if
+      // the next event lands on another tile or on the strip's blank space.
+      wheelAnchorAddress = column.address;
+      wheelAnchorWorkspace = snapshot.workspaceId;
+      wheelAnchorPoint = point;
+      tileWheel(column, event);
+    } else scrollWheel(event);
+  }
+
+  function scrollWheel(event) {
     if (resizing) { event.accepted = true; return; }
     if (!overflow) { event.accepted = true; return; }
     var delta = Model.wheelStep(event.pixelDelta.x, event.pixelDelta.y,
@@ -395,24 +477,12 @@ BarWidget {
 
   function openMenu(anchor) {
     if (dragging || resizing) return;
+    clearWheelAnchor();
     scrollDirection = 0;
     hoverArmed = false;
     menuKind = "general";
     menuAnchor = anchor;
     menuCursor = arrowMode === "hover" ? 0 : 1;
-    menuOpen = true;
-  }
-
-  function openAppMenu(anchor, column) {
-    if (dragging || resizing) return;
-    scrollDirection = 0;
-    hoverArmed = false;
-    menuAddress = column.address;
-    menuWorkspace = snapshot.workspaceId;
-    menuMonitor = monitorName;
-    menuKind = "app";
-    menuAnchor = anchor;
-    menuCursor = 0;
     menuOpen = true;
   }
 
@@ -436,7 +506,6 @@ BarWidget {
     if (mode === "underlines" || mode === "tiles") persistSetting("indicationMode", mode);
   }
   function buildMenuItems() {
-    if (menuKind === "app") return [{label: "Close", action: "close"}];
     if (menuKind === "regions") return [
       {label: "‹ Back", action: "back"},
       {label: "Left", action: "region", value: "left"},
@@ -454,8 +523,7 @@ BarWidget {
   function chooseMenuItem(index) {
     var item = menuItems[index];
     if (!item) return;
-    if (item.action === "close") closeColumn();
-    else if (item.action === "arrow") chooseMode(item.value);
+    if (item.action === "arrow") chooseMode(item.value);
     else if (item.action === "appearance") chooseIndication(item.value);
     else if (item.action === "reset") persistSetting("widthRatio", 0.85);
     else if (item.action === "move") { menuKind = "regions"; menuCursor = 0; }
@@ -543,7 +611,10 @@ BarWidget {
     height: root.barSize
     clip: true
     visible: width > 0
-    HoverHandler { id: stripHover }
+    HoverHandler {
+      id: stripHover
+      onHoveredChanged: if (!hovered) root.clearWheelAnchor()
+    }
     readonly property bool tooltipHovered: stripHover.hovered
     function triggerPress(button) { if (button === Qt.RightButton) root.openMenu(strip); }
     // Padding and empty workspaces retain a menu target, including while a
@@ -571,11 +642,12 @@ BarWidget {
     Component.onDestruction: if (registeredBar) HostAdapter.unregisterClickTarget(registeredBar, strip)
 
     MouseArea {
+      id: stripBackground
       anchors.fill: parent
       z: -1
       acceptedButtons: Qt.LeftButton | Qt.RightButton
       onClicked: function(event) { if (event.button === Qt.RightButton) root.openMenu(strip); }
-      onWheel: function(event) { root.wheel(event); }
+      onWheel: function(event) { root.wheel(event, stripBackground); }
     }
 
     StripArrow {
@@ -609,10 +681,11 @@ BarWidget {
         }
       }
       MouseArea {
+        id: viewportBackground
         anchors.fill: parent
         z: -1
         acceptedButtons: Qt.NoButton
-        onWheel: function(event) { root.wheel(event); }
+        onWheel: function(event) { root.wheel(event, viewportBackground); }
       }
     }
     StripArrow {
@@ -626,7 +699,7 @@ BarWidget {
     }
     Rectangle {
       objectName: "dropMarker"
-      visible: root.dragging && root.dropTarget !== null
+      visible: root.dragging && root.dropTarget !== null && root.dropTarget.changed
       x: root.dropTarget ? Math.max(root.endSpace, Math.min(root.stripWidth - root.endSpace,
         root.endSpace + root.contentInset + root.dropTarget.position - root.scrollOffset)) - width / 2 : 0
       y: Style.space(3)

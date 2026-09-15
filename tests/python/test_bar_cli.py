@@ -44,11 +44,26 @@ class CliTests(unittest.TestCase):
         self.assertIn('omarchy_tape_bar.close(', code)
         self.assertNotIn('.focus(', code)
 
+    def test_width_cycle_is_addressed_and_compositor_owned(self):
+        _, _, run = self.invoke(['cycle_width', '0xAB', '--workspace', '4', '--monitor', 'eDP-1'])
+        code = run.call_args.args[0][2]
+        self.assertIn(f'omarchy_tape_bar.cycle_width({cli.lua_string("0xab")}, 4, '
+                      f'{cli.lua_string("eDP-1")})', code)
+
     def test_snapshot_and_focus_remain_compatible(self):
         _, _, run = self.invoke(['snapshot'])
         self.assertIn('omarchy_tape_bar.snapshot(nil)', run.call_args.args[0][2])
         _, _, run = self.invoke(['focus', '0x12', '--workspace', '1'])
         self.assertIn('omarchy_tape_bar.focus(', run.call_args.args[0][2])
+
+    def test_super_o_cycle_encodes_each_direction_and_defaults_forward(self):
+        for direction in (None, '1', '-1'):
+            arguments = ['cycle_window', '0xAB', '--workspace', '4', '--monitor', 'eDP-1']
+            if direction is not None:
+                arguments += ['--direction', direction]
+            _, _, run = self.invoke(arguments)
+            self.assertIn(f'omarchy_tape_bar.cycle_window({cli.lua_string("0xab")}, 4, '
+                          f'{cli.lua_string("eDP-1")}, {direction or "1"})', run.call_args.args[0][2])
 
     def test_focus_normalizes_accepted_hexadecimal_addresses(self):
         _, _, run = self.invoke(['focus', '0xABcd', '--workspace', '1', '--monitor', 'one'])
@@ -58,12 +73,21 @@ class CliTests(unittest.TestCase):
 
     def test_rejected_arguments_never_invoke_compositor(self):
         cases = [
+            ['cycle_width', '0x12', '--workspace', '1'],
+            ['cycle_width', '0x12', '--workspace', '1', '--monitor', ''],
+            ['cycle_width', '0x12;bad()', '--workspace', '1', '--monitor', 'eDP-1'],
+            ['cycle_width', '0x12', '--workspace', '1', '--monitor', 'eDP-1', '--direction', '1'],
+            ['cycle_window', '0x12', '--workspace', '1'],
+            ['cycle_window', '0x12', '--workspace', '1', '--monitor', ''],
+            ['cycle_window', '0x12;bad()', '--workspace', '1', '--monitor', 'eDP-1'],
             ['close', '0x12;bad()', '--workspace', '1', '--monitor', 'eDP-1'],
             ['close', '0x12', '--workspace', '1'],
             ['close', '0x12', '--workspace', '1', '--monitor', ''],
             ['reorder', '0x12', '--target', 'bogus', '--side', 'after', '--workspace', '1', '--monitor', 'eDP-1'],
             ['reorder', '0x12', '--target', '0x13', '--side', 'outside', '--workspace', '1', '--monitor', 'eDP-1'],
         ]
+        cases += [['cycle_window', '0x12', '--workspace', '1', '--monitor', 'eDP-1', '--direction', value]
+                  for value in ('0', '2', '-2', '1.0', '1;bad()', '')]
         for arguments in cases:
             with self.subTest(arguments=arguments), mock.patch.object(cli.subprocess, 'run') as run:
                 with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit) as error:

@@ -47,7 +47,7 @@ Item {
     else if (button === Qt.MiddleButton)
       controller.closeColumn(modelData);
     else if (button === Qt.RightButton)
-      controller.openAppMenu(tile, modelData);
+      controller.cycleColumnWidth(modelData);
   }
   onModelDataChanged: {
     if (hit.containsMouse && !controller.dragging)
@@ -155,7 +155,7 @@ Item {
     onExited: if (controller.bar)
       controller.hideTooltip(tile)
     onWheel: function (event) {
-      controller.wheel(event);
+      controller.wheel(event, hit, tile.modelData);
     }
   }
 }

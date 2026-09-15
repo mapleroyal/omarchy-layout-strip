@@ -36,7 +36,7 @@ Check `omarchy_tape_bar.protocol_version == 2` before requests. Every reply cont
 - `snapshot_all({monitor1, monitor2})` returns `{ok, protocolVersion, snapshots:[...]}`.
 - `protect_region(monitor, x, y, width, height, owner)` refreshes one input lease.
 - `protect_regions({{monitor=...,x=...,y=...,width=...,height=...},...}, owner)` refreshes or clears a batch independently of state polling.
-- `focus(address, workspaceId, monitor)`, `close(...)`, and `reorder(address, targetAddress, side, workspaceId, monitor)` keep addressed action validation.
+- `focus(address, workspaceId, monitor)`, `close(...)`, `cycle_width(...)`, and `reorder(address, targetAddress, side, workspaceId, monitor)` keep addressed action validation. Width cycling reads the live column width and calls native addressed resizing to cycle half, two-thirds, full, and half again. It preserves keyboard focus and pointer position, with camera compensation for the visible focused or largest unchanged column.
 
 Region coordinates are global logical pixels. Both positive dimensions register a region; both zero clear only the supplied owner's registration. A replacement shell must use a new owner token. Leases expire after 3500ms, even when a shell dies without clearing. One owner can register one region per monitor. Each snapshot exposes `nativeProtocolVersion`, `capabilities.addressedCamera`, `capabilities.ownedRegions`, `reorderAvailable`, and `protectRegionAvailable`. Missing native-v2 capabilities disable unsupported operations rather than guessing at another protocol.
 

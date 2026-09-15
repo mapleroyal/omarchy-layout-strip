@@ -7,6 +7,7 @@
 #include <hyprland/src/desktop/view/Window.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/Compositor.hpp>
+#include <hyprland/src/config/ConfigValue.hpp>
 #include <hyprland/src/output/Monitor.hpp>
 #include <hyprland/src/layout/algorithm/Algorithm.hpp>
 #include <hyprland/src/layout/algorithm/tiled/scrolling/ScrollingAlgorithm.hpp>
@@ -411,6 +412,89 @@ static TapeReorder::Box reorderBox(const CBox& box) {
     return {box.x, box.y, box.w, box.h};
 }
 
+static int resizeColumn(lua_State* lua) {
+    finishReleasedBarPress();
+    if (lua_gettop(lua) != 4 || lua_type(lua, 1) != LUA_TSTRING || lua_type(lua, 2) != LUA_TNUMBER ||
+        !lua_isinteger(lua, 3) || lua_type(lua, 4) != LUA_TSTRING)
+        return result(lua, "resize_column expects address, width fraction, workspace integer, monitor name");
+    const double requestedWidth = lua_tonumber(lua, 2);
+    if (!std::isfinite(requestedWidth) || requestedWidth < 0.05 || requestedWidth > 1)
+        return result(lua, "column width must be between 0.05 and 1");
+    const auto window = windowAtAddress(stringArgument(lua, 1));
+    if (!window || !window->m_isMapped || window->isHidden() || window->m_isFloating || !valid(window->m_workspace))
+        return result(lua, "the window is no longer a visible tiled column");
+    const auto workspace = window->m_workspace;
+    const auto monitor = workspace->m_monitor.lock();
+    if (workspace->m_id != lua_tointeger(lua, 3) || !monitor || monitor->m_name != stringArgument(lua, 4) ||
+        (monitor->m_activeSpecialWorkspace ? monitor->m_activeSpecialWorkspace : monitor->m_activeWorkspace) != workspace)
+        return result(lua, "the displayed workspace or monitor changed");
+    if (Fullscreen::controller()->hasFullscreen(workspace))
+        return result(lua, "cannot resize a workspace with a real fullscreen window");
+    if (const auto& drag = g_layoutManager->dragController(); drag && drag->target())
+        return result(lua, "cannot resize during a native window drag");
+    const auto tape = tapeForWorkspace(workspace);
+    const auto target = tape ? tape->dataFor(window->layoutTarget()) : nullptr;
+    const auto column = target ? target->column.lock() : nullptr;
+    const auto data = column ? column->scrollingData.lock() : nullptr;
+    if (!data || data->algorithm != tape || !data->controller)
+        return result(lua, "the scrolling column changed");
+    const auto index = data->idx(column);
+    if (index < 0 || data->controller->stripCount() != data->columns.size())
+        return result(lua, "the scrolling columns are changing");
+    auto& inhibitor = data->controller->getScrollInhibitor();
+    if (inhibitor.isInhibited)
+        return result(lua, "cannot resize while another operation inhibits scrolling");
+
+    const auto area = tape->usableArea();
+    const double viewport = tape->primaryViewportSize(), offsetBefore = data->controller->getOffset();
+    const double widthBefore = column->getColumnWidth();
+    const bool changed = std::abs(requestedWidth - widthBefore) > 0.000001;
+    bool anchorPreserved = true;
+    if (changed) {
+        static const auto fullscreenOnOne = CConfigValue<Config::INTEGER>("scrolling:fullscreen_on_one_column");
+        std::optional<size_t> focusedIndex;
+        const auto focused = Desktop::focusState()->window();
+        const auto focusedData = focused && focused->m_workspace == workspace && !focused->m_isFloating
+            ? tape->dataFor(focused->layoutTarget()) : nullptr;
+        const auto focusedColumn = focusedData ? focusedData->column.lock() : nullptr;
+        const auto focusedPosition = focusedColumn ? data->idx(focusedColumn) : -1;
+        if (focusedPosition >= 0) focusedIndex = static_cast<size_t>(focusedPosition);
+        TapeReorder::Plan plan;
+        try {
+            std::vector<double> widths;
+            for (size_t i = 0; i < data->columns.size(); ++i) {
+                if (data->controller->getStrip(i).userData.lock() != data->columns[i])
+                    return result(lua, "the scrolling strip identities changed");
+                widths.push_back(data->controller->calculateStripSize(i, area, *fullscreenOnOne));
+            }
+            const double nextSize = widths.size() == 1 && *fullscreenOnOne ? viewport : requestedWidth * viewport;
+            plan = TapeReorder::resizePlan(widths, viewport, offsetBefore, index, nextSize, focusedIndex);
+        } catch (const std::exception& error) {
+            return result(lua, error.what());
+        }
+        // Change only the addressed column and apply its camera compensation
+        // in one native recalculation. No focus, pointer, or MRU action occurs.
+        struct SRestoreInhibitor {
+            Layout::Tiled::SScrollInhibitor& target;
+            Layout::Tiled::SScrollInhibitor saved;
+            ~SRestoreInhibitor() { target = saved; }
+        } restore{inhibitor, inhibitor};
+        inhibitor.isInhibited = true;
+        inhibitor.offsetWhenInhibited = plan.offset;
+        column->setColumnWidth(static_cast<float>(requestedWidth));
+        data->controller->setOffset(plan.offset);
+        data->recalculate();
+        anchorPreserved = plan.anchorPreserved;
+    }
+    result(lua);
+    boolField(lua, "changed", changed);
+    boolField(lua, "anchorPreserved", anchorPreserved);
+    numberField(lua, "width", column->getColumnWidth());
+    numberField(lua, "offsetBefore", offsetBefore);
+    numberField(lua, "offsetAfter", data->controller->getOffset());
+    return 1;
+}
+
 static int reorder(lua_State* lua) {
     finishReleasedBarPress();
     if (lua_gettop(lua) != 5 || lua_type(lua, 1) != LUA_TSTRING || lua_type(lua, 2) != LUA_TSTRING ||
@@ -743,6 +827,7 @@ static int info(lua_State* lua) {
     boolField(lua, "ownedRegions", true);
     numberField(lua, "protectedRegionCount", g_barRegions.count(BarClock::now()));
     boolField(lua, "reorder", true);
+    boolField(lua, "addressedResize", true);
     return 1;
 }
 
@@ -760,6 +845,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     if (!HyprlandAPI::addLuaFunction(handle, "tape", "pan", pan) || !HyprlandAPI::addLuaFunction(handle, "tape", "pan_direct", panDirect) ||
         !HyprlandAPI::addLuaFunction(handle, "tape", "snapshot", snapshot) ||
         !HyprlandAPI::addLuaFunction(handle, "tape", "reorder", reorder) ||
+        !HyprlandAPI::addLuaFunction(handle, "tape", "resize_column", resizeColumn) ||
         !HyprlandAPI::addLuaFunction(handle, "tape", "protect_bar_region", protectBarRegion) ||
         !HyprlandAPI::addLuaFunction(handle, "tape", "info", info))
         throw std::runtime_error("native-tape: could not register hl.plugin.tape Lua API");
@@ -768,7 +854,7 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
     g_afterDrop  = Event::bus()->m_events.window.floating.listen([](PHLWINDOW window) { finishLeadingDrop(window); });
     g_barPressListener = Event::bus()->m_events.input.mouse.button.listen([](IPointer::SButtonEvent event, Event::SCallbackInfo&) { guardBarPress(event); });
 
-    return {"native-tape", "Public scrolling navigation and addressed reorder bridge for Lua", "local", "2.1"};
+    return {"native-tape", "Public scrolling navigation and addressed column editing bridge for Lua", "local", "2.2"};
 }
 
 APICALL EXPORT void PLUGIN_EXIT() {
@@ -783,6 +869,7 @@ APICALL EXPORT void PLUGIN_EXIT() {
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "pan_direct");
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "snapshot");
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "reorder");
+    HyprlandAPI::removeLuaFunction(g_handle, "tape", "resize_column");
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "protect_bar_region");
     HyprlandAPI::removeLuaFunction(g_handle, "tape", "info");
 }

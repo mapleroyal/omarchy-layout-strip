@@ -59,11 +59,11 @@ function regions(values, owner) {
 function parseAction(args) {
   if (!Array.isArray(args) || args.length < 3) throw new Error("Invalid action");
   var action = args[1];
-  if (["focus", "close", "reorder"].indexOf(action) < 0) throw new Error("Unknown action");
+  if (["focus", "close", "cycle_width", "cycle_window", "reorder"].indexOf(action) < 0) throw new Error("Unknown action");
   var fields = {};
   for (var i = 3; i < args.length; i += 2) {
     var key = args[i];
-    if (["--workspace", "--monitor", "--target", "--side"].indexOf(key) < 0 || fields[key] !== undefined || i + 1 >= args.length)
+    if (["--workspace", "--monitor", "--target", "--side", "--direction"].indexOf(key) < 0 || fields[key] !== undefined || i + 1 >= args.length)
       throw new Error("Invalid action argument");
     fields[key] = args[i + 1];
   }
@@ -77,7 +77,14 @@ function parseAction(args) {
     if (["before", "after"].indexOf(fields["--side"]) < 0) throw new Error("Invalid reorder side");
     call += "," + address(fields["--target"]) + "," + luaString(fields["--side"]);
   } else if (fields["--target"] !== undefined || fields["--side"] !== undefined) throw new Error("Unexpected reorder arguments");
-  call += "," + workspace(id) + "," + monitor(fields["--monitor"]) + ")";
+  call += "," + workspace(id) + "," + monitor(fields["--monitor"]);
+  if (action === "cycle_window") {
+    var direction = fields["--direction"] === undefined ? "1" : fields["--direction"];
+    if (direction !== "1" && direction !== "-1" && direction !== 1 && direction !== -1)
+      throw new Error("Cycle direction must be 1 or -1");
+    call += "," + direction;
+  } else if (fields["--direction"] !== undefined) throw new Error("Unexpected cycle direction");
+  call += ")";
   return {kind:action,workspaceId:id,monitorName:fields["--monitor"],command:command(call)};
 }
 function reply(text) {

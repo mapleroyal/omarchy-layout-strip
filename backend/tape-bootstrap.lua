@@ -24,6 +24,21 @@ function M.new(hl, tape, Bar)
     end
     return result
   end
+  function self.browse_from_bar(direction, monitor_name)
+    if disposed then return { ok = false, error = "The bar integration was reloaded" } end
+    -- Keyboard focus normally warps the cursor into its destination window.
+    -- A wheel gesture must keep its pointer on the bar for the next notch.
+    -- This synchronous scope also covers crossing to another monitor; restore
+    -- the user's setting on failures without changing keyboard navigation.
+    local previous = hl.get_config("cursor.no_warps")
+    hl.config({ cursor = { no_warps = true } })
+    local ok, result = pcall(function()
+      return self.finish_navigation(tape.browse_monitor(direction, monitor_name))
+    end)
+    hl.config({ cursor = { no_warps = previous } })
+    if not ok then error(result, 0) end
+    return result
+  end
   function self.begin_pointer_refocus_deferral()
     if disposed then return end
     if refocus_timer:is_enabled() then pending=true; refocus_timer:set_enabled(false) end

@@ -28,6 +28,15 @@ def main(argv=None):
     close.add_argument('address')
     close.add_argument('--workspace', type=int, required=True)
     close.add_argument('--monitor', required=True)
+    cycle_width = commands.add_parser('cycle_width', help='cycle half, two-thirds, full column width without changing focus')
+    cycle_width.add_argument('address')
+    cycle_width.add_argument('--workspace', type=int, required=True)
+    cycle_width.add_argument('--monitor', required=True)
+    cycle_window = commands.add_parser('cycle_window', help='cycle the addressed window through its Super+O states')
+    cycle_window.add_argument('address')
+    cycle_window.add_argument('--workspace', type=int, required=True)
+    cycle_window.add_argument('--monitor', required=True)
+    cycle_window.add_argument('--direction', choices=('1', '-1'), default='1')
     reorder = commands.add_parser('reorder', help='move a column without activating its window')
     reorder.add_argument('address')
     reorder.add_argument('--target', required=True)
@@ -41,7 +50,7 @@ def main(argv=None):
             parser.error(f'{field} must be a Hyprland hexadecimal window address')
         if value is not None:
             setattr(args, field, value.lower())
-    if args.command in ('reorder', 'close') and not args.monitor:
+    if args.command in ('reorder', 'close', 'cycle_width', 'cycle_window') and not args.monitor:
         parser.error('monitor name cannot be empty')
     if args.command == 'snapshot' and args.protect_region is not None:
         if not args.monitor:
@@ -60,6 +69,9 @@ def main(argv=None):
         invocation = (f'omarchy_tape_bar.reorder({lua_string(args.address)}, '
                       f'{lua_string(args.target)}, {lua_string(args.side)}, '
                       f'{args.workspace}, {monitor})')
+    elif args.command == 'cycle_window':
+        invocation = (f'omarchy_tape_bar.cycle_window({lua_string(args.address)}, '
+                      f'{args.workspace}, {monitor}, {args.direction})')
     else:
         invocation = (f'omarchy_tape_bar.{args.command}({lua_string(args.address)}, '
                       f'{args.workspace}, {monitor})')

@@ -32,7 +32,7 @@ This local Hyprland plugin exposes the following functions to Lua:
   stale monitor/workspace context, real fullscreen, active native drag, and an
   existing inhibitor are rejected before a pan. This path powers close repair.
 - `hl.plugin.tape.info()` returns `protocolVersion=2`, capability flags
-  `addressedCamera`, `directPan`, `ownedRegions`, and `reorder`, the current live
+  `addressedCamera`, `addressedResize`, `directPan`, `ownedRegions`, and `reorder`, the current live
   `protectedRegionCount`, the callback's actual loaded library `path`, and
   compile-time `git_hash`. The path comes from the dynamic linker, so rebuild
   validation checks which binary supplies the functions, not just a plugin name.
@@ -64,6 +64,16 @@ This local Hyprland plugin exposes the following functions to Lua:
   maximum hold prevents indefinite inhibition. Once all physical buttons are up,
   bridge actions also clear a completed lease before they run. Native window
   dragging is excluded, and floating/fullscreen focus needs no protection.
+- `hl.plugin.tape.resize_column(address, width, workspaceId, monitorName)` changes
+  the addressed scrolling column's fraction without focusing any window or
+  moving the pointer. It keeps the visible focused column stationary where
+  possible; with focus elsewhere, it anchors the largest unchanged visible
+  column. Only the new tape bounds can limit that compensation. It uses public
+  `SColumnData::setColumnWidth` and one native recalculation, and refuses stale
+  context, real fullscreen, native dragging, and independent scroll inhibitors.
+  The result includes `changed`, `width`, `anchorPreserved`, `offsetBefore`, and
+  `offsetAfter`. Widths must be finite fractions between 0.05 and 1. This avoids
+  the ordinary mouse-resize dispatcher's viewport-edge clamp on offscreen tiles.
 - `hl.plugin.tape.reorder(sourceAddress, targetAddress, side, workspaceId, monitorName)`
   moves the source's complete scrolling column immediately `"before"` or `"after"`
   the target's column. Addresses are `"0x..."` strings, the workspace ID is an

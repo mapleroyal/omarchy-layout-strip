@@ -296,6 +296,50 @@ function M.new(hl)
     return pan_to(s, offset, s.columns[index].window)
   end
 
+  -- A bar wheel belongs to the output under the pointer, which need not be
+  -- the keyboard's focused output. Choose the stop from that output's view
+  -- before native focus has a chance to align its remembered window.
+  function self.browse_monitor(direction, monitor_name)
+    if direction ~= "l" and direction ~= "r" then
+      return { ok = false, error = "Invalid browsing direction" }
+    end
+    if type(monitor_name) ~= "string" or monitor_name == "" then
+      return { ok = false, error = "A monitor name is required" }
+    end
+    local workspace
+    for _, monitor in ipairs(hl.get_monitors()) do
+      if monitor.name == monitor_name then
+        workspace = monitor.active_special_workspace or monitor.active_workspace
+        break
+      end
+    end
+    if not workspace then return { ok = false, error = "The bar's monitor is no longer available" } end
+    local current = current_workspace()
+    -- Moving over a bar can change the active monitor while keyboard focus
+    -- remains on the previous output. Only use the ordinary path when its
+    -- camera is actually available; otherwise use the addressed view below.
+    if current and current.id == workspace.id and self.snapshot() then return self.browse(direction, false) end
+    self.invalidate_workspace(workspace.id)
+    local before = self.snapshot(workspace.id, monitor_name)
+    if not before then
+      local result = hl.dispatch(hl.dsp.focus({ monitor = monitor_name }))
+      if failed(result) then return result end
+      return self.browse(direction, false)
+    end
+    local offset, index = G.next(before, direction, false)
+    if not offset then return noop() end
+    local selected = before.columns[index].window
+    local result = hl.dispatch(hl.dsp.focus({ window = selected }))
+    if failed(result) then return result end
+    local after = self.snapshot()
+    if not after or after.workspace_id ~= workspace.id then
+      return { ok = true, changed = true }
+    end
+    result = pan_to(after, offset, selected)
+    if not failed(result) then result.changed = true end
+    return result
+  end
+
   function self.focus(direction, edge)
     self.invalidate_workspace()
     local s = self.snapshot()
@@ -355,9 +399,14 @@ function M.new(hl)
 
     local s = current and current.id == workspace.id and self.snapshot() or nil
     local focus_changed = false
+    local previous_offset
     if not s then
       -- Focusing another monitor (or leaving a floating window) establishes
-      -- the camera's workspace. Both operations finish in this same Lua call.
+      -- the camera's workspace, but native focus can move its camera. Keep the
+      -- addressed view so the final fit uses what was visible before the click.
+      -- Focus and the corrective pan finish in this same synchronous Lua call.
+      local before = self.snapshot(workspace.id, workspace.monitor.name)
+      previous_offset = before and before.offset
       local active = hl.get_active_window()
       focus_changed = not active or active.address ~= selected.address
       local result = hl.dispatch(hl.dsp.focus({ window = selected }))
@@ -369,7 +418,14 @@ function M.new(hl)
     for _, column in ipairs(s.columns) do
       for _, window in ipairs(column.windows) do
         if window.address:lower() == address then
-          local result = pan_to(s, column.start, selected)
+          -- Keep an already visible column still; reveal a clipped/offscreen
+          -- column at the nearest edge. The interval also handles an oversized
+          -- column by keeping the viewport inside it with the least movement.
+          local left, right = column.start, column.finish - s.width
+          local original_offset = previous_offset or s.offset
+          local target = clamp(original_offset, math.min(left, right), math.max(left, right))
+          local result = pan_to(s, target, selected,
+            math.abs(target - original_offset) <= EPS and (target < s.minimum or target > s.maximum))
           if not failed(result) then
             result.aligned = true
             result.changed = result.changed or focus_changed

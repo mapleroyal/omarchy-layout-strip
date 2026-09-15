@@ -4,8 +4,15 @@ Installed component of Layout Strip 1.0.0. The maintained source, installer,
 backend, and complete test suite are in the source repository.
 
 Hover an icon for its window title. There are no thumbnail/video previews.
-Click to focus, drag to reorder, and middle-click a window item to close it.
-Close is also available from its right-click menu; app save prompts are honored.
+Click to focus, drag to reorder, and middle-click a window item to close it;
+app save prompts are honored. Right-click a tile to cycle its column's width
+through half, two-thirds, full, then half again without changing focus or moving
+the pointer. The visible layout stays anchored where its new width permits.
+Scroll down over a tile to advance the custom Super+O window cycle (original →
+centered floating two-thirds → half → original); scroll up to reverse it. Its
+tile stays available while floating. This uses the shared cycle functions in
+the user's Hyprland bindings. Horizontal scrolling still browses the strip;
+vertical scrolling over arrows or blank space also browses overflow.
 Right-click blank space or an arrow for settings; resize from either narrow edge.
 
 Stable icon objects preserve clicks and menu anchors across metadata updates.

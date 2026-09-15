@@ -94,7 +94,7 @@ Item {
         arrow.triggerPress(event.button);
     }
     onWheel: function (event) {
-      controller.wheel(event);
+      controller.wheel(event, mouse);
     }
   }
 }
