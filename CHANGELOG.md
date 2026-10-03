@@ -1,5 +1,8 @@
 # Unreleased
 
+- Keep floating windows visible independently of saved Super+O restore state, with a floating marker and remembered strip placement.
+- Represent stacked columns with stable tile identities, last-focused app icons, member-count badges and a top-to-bottom app chooser.
+- Keep member focus and close actions addressed to individual windows while preserving whole-column sizing and dragging.
 - Allow smooth navigation away from and back to scrolling-managed fullscreen windows while retaining their fullscreen state, with one landing per fullscreen column and cancellation/regrab support.
 - Keep unsupported fullscreen handlers outside native camera operations and add Lua plus private-compositor regression coverage.
 - Restore strip allocation on Omarchy 4.0.3's scoped bar interface so it stays between neighboring widgets and the center clock.

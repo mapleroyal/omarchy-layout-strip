@@ -8,9 +8,12 @@ remove that shared dependency.
 
 See the [implementation and validation report](docs/implementation.md)
 for completed fixes, measurements and installation results.
+The [floating-window and stack notes](docs/window-collections.md) describe the
+current collection behavior and its private-compositor regression checks.
 
-An icon represents one tiled column in the displayed workspace, or a window
-temporarily floated through the Super+O cycle. Hover shows
+An icon represents one tiled column or floating window in the displayed
+workspace. Stacked columns have a member-count badge; floating windows have
+a floating marker. Hover shows
 the window title. There is no window-thumbnail or video-preview feature.
 Internal references to the **camera** mean the desktop's horizontal scroll
 position—which columns are visible—not a thumbnail or recording device.
@@ -24,6 +27,10 @@ position—which columns are visible—not a thumbnail or recording device.
   close its window without first focusing it; apps can show their usual unsaved-work prompt.
 - Drag an icon to reorder whole columns; release outside or right-click during
   the drag to cancel. Hovering near the strip ends scrolls only the strip.
+- Click a stack badge to open its app list in top-to-bottom window order.
+  Click a member to focus it, or use its close button to close that window.
+  The column keeps its tile when focus changes between members, and remembers
+  the last focused member when another column becomes active.
 - Scroll down over a tile to advance the custom Super+O cycle: original layout,
   centered floating two-thirds width, half width, then restore. Scroll up reverses
   the cycle. The floating window keeps its tile, and keyboard and wheel actions
@@ -35,12 +42,19 @@ position—which columns are visible—not a thumbnail or recording device.
   Drag either narrow edge to resize around the strip's fixed center.
 - Underlines and Tiles show half/two-thirds/full column widths. Colors, corners
   and icons follow Omarchy. Horizontal bars are supported in all three sections;
-  stacked columns use one representative window.
+  stacked columns retain one tile with a member chooser. This works on portrait
+  and landscape monitors with a horizontal bar.
+
+Floating tiles remain available when another app opens or takes focus. A
+formerly tiled window keeps its remembered strip position; floats without a
+remembered column follow the tiled entries. Their presence does not depend on
+the optional Super+O helper retaining its restore state. Column resizing and
+reordering apply to tiled windows; reordering is paused while floating tiles
+are present.
 
 Tile interaction uses the pointer. The existing desktop keyboard and gesture
-navigation continues through the shared backend; vertical bars, a separate
-keyboard traversal mode for tiles, and individual stacked members are outside
-this widget's current feature set.
+navigation continues through the shared backend; vertical bars and a separate
+keyboard traversal mode for tiles are outside this widget's current feature set.
 
 In smooth gesture mode, scrolling-managed fullscreen windows—including browser
 videos—move with the other columns. Swipe away and back without leaving

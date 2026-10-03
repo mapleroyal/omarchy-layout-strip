@@ -11,12 +11,20 @@ Item {
   required property Item strip
   required property Item viewport
   objectName: "layoutTile"
-  required property var columnData
-  readonly property var modelData: columnData
+  required property string columnJson
+  // Preserve nested members as plain immutable JS values: ListModel otherwise
+  // converts arrays/objects to nested roles that can change under a pointer grab.
+  readonly property var modelData: JSON.parse(columnJson)
+  readonly property int memberCount: Model.members(modelData).length
+  readonly property real badgeWidth: controller.stackBadgeWidth(modelData)
+  readonly property string tooltipText: String(modelData.title || modelData.class)
+    + (memberCount > 1 ? " · " + memberCount + " windows in this column" : "")
+    + (modelData.floating ? " · Floating" : "")
+    + (controller.statusMessage ? " · " + controller.statusMessage : "")
   width: controller.tileWidth(modelData)
   height: controller.barSize
   readonly property bool focused: modelData.focused === true
-  opacity: controller.dragging && controller.dragColumn.address === modelData.address ? 0.25 : 1
+  opacity: controller.dragging && Model.columnKey(controller.dragColumn) === Model.columnKey(modelData) ? 0.25 : 1
   readonly property bool tooltipHovered: hit.containsMouse
   readonly property bool interactive: forwardedHit.width > 0
   Item {
@@ -32,32 +40,62 @@ Item {
       tile.triggerPress(button);
     }
   }
+  Item {
+    id: forwardedBadge
+    objectName: "layoutStackTarget"
+    parent: viewport
+    property var tileItem: tile
+    readonly property bool interactive: tile.memberCount > 1 && width > 0
+    readonly property real start: tile.x + controller.contentInset - controller.scrollOffset + badge.x
+    x: Math.max(0, start)
+    width: tile.memberCount > 1 ? Math.max(0, Math.min(viewport.width, start + badge.width) - x) : 0
+    height: tile.height
+    function triggerPress(button) { tile.triggerBadgePress(button); }
+    onInteractiveChanged: {
+      if (!interactive && controller.menuAnchor === forwardedBadge) controller.close();
+      tile.syncRegistration();
+    }
+  }
   property var registeredBar: null
   readonly property var hostBar: controller.bar
   function syncRegistration() {
-    if (registeredBar)
+    if (registeredBar) {
       HostAdapter.unregisterClickTarget(registeredBar, forwardedHit);
+      HostAdapter.unregisterClickTarget(registeredBar, forwardedBadge);
+    }
     registeredBar = hostBar;
     if (registeredBar && interactive)
       HostAdapter.registerClickTarget(registeredBar, forwardedHit);
+    // Popup forwarding picks the last registered matching target.
+    if (registeredBar && forwardedBadge.interactive)
+      HostAdapter.registerClickTarget(registeredBar, forwardedBadge);
   }
-  function triggerPress(button) {
+  function triggerPress(button, column) {
+    column = column || modelData;
     if (button === Qt.LeftButton)
-      controller.focusColumn(modelData);
+      controller.focusColumn(column);
     else if (button === Qt.MiddleButton)
-      controller.closeColumn(modelData);
+      controller.closeColumn(column);
     else if (button === Qt.RightButton)
-      controller.cycleColumnWidth(modelData);
+      controller.cycleColumnWidth(column);
+  }
+  function triggerBadgePress(button) {
+    if (button === Qt.LeftButton) {
+      controller.hideTooltip(tile);
+      controller.openStack(forwardedBadge, modelData);
+    } else triggerPress(button);
   }
   onModelDataChanged: {
     if (hit.containsMouse && !controller.dragging)
-      controller.showTooltip(tile, String(modelData.title || modelData.class) + (controller.statusMessage ? " · " + controller.statusMessage : ""));
+      controller.showTooltip(tile, tooltipText);
   }
   onHostBarChanged: syncRegistration()
   onInteractiveChanged: syncRegistration()
   Component.onCompleted: syncRegistration()
-  Component.onDestruction: if (registeredBar)
-    HostAdapter.unregisterClickTarget(registeredBar, forwardedHit)
+  Component.onDestruction: if (registeredBar) {
+    HostAdapter.unregisterClickTarget(registeredBar, forwardedHit);
+    HostAdapter.unregisterClickTarget(registeredBar, forwardedBadge);
+  }
 
   BorderSurface {
     objectName: "tileSurface"
@@ -76,7 +114,8 @@ Item {
     }
   }
   Image {
-    anchors.horizontalCenter: parent.horizontalCenter
+    id: appImage
+    x: (parent.width - tile.badgeWidth - width) / 2
     y: Math.round((parent.height - height) / 2) - (controller.indicationMode === "underlines" ? Style.space(1) : 0)
     width: controller.iconSize
     height: controller.iconSize
@@ -84,6 +123,54 @@ Item {
     sourceSize.width: Math.round(width * Screen.devicePixelRatio)
     sourceSize.height: Math.round(height * Screen.devicePixelRatio)
     fillMode: Image.PreserveAspectFit
+  }
+  Item {
+    id: badge
+    objectName: "stackBadge"
+    visible: tile.memberCount > 1
+    x: parent.width - tile.badgeWidth
+    width: tile.badgeWidth
+    height: parent.height
+    Accessible.name: tile.memberCount + " windows in this column; show windows"
+    Accessible.role: Accessible.Button
+    Accessible.onPressAction: tile.triggerBadgePress(Qt.LeftButton)
+    Row {
+      anchors.centerIn: parent
+      spacing: Style.space(2)
+      Column {
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.space(2)
+        Repeater {
+          model: 2
+          Rectangle {
+            width: Style.space(4)
+            height: Style.space(4)
+            color: "transparent"
+            border.width: Math.max(1, Style.space(1))
+            border.color: controller.foreground
+          }
+        }
+      }
+      Text {
+        text: tile.memberCount > 9 ? "9+" : String(tile.memberCount)
+        color: controller.foreground
+        font.family: Style.font.family
+        font.pixelSize: Style.space(10)
+        font.bold: true
+      }
+    }
+  }
+  Rectangle {
+    objectName: "floatingMarker"
+    visible: tile.modelData.floating === true
+    x: appImage.x + appImage.width - width / 2
+    y: Style.space(2)
+    width: Style.space(7)
+    height: Style.space(6)
+    color: Color.bar.background
+    border.color: controller.foreground
+    border.width: Math.max(1, Style.space(1))
+    Accessible.name: "Floating window"
   }
   Rectangle {
     objectName: "widthUnderline"
@@ -106,6 +193,8 @@ Item {
     property point pressedPoint: Qt.point(0, 0)
     property bool dragged: false
     property bool suppressClick: false
+    property var pressedColumn: null
+    property bool pressedBadge: false
     onPressed: function (event) {
       if (controller.dragging) {
         if (event.button === Qt.RightButton) {
@@ -119,6 +208,8 @@ Item {
         dragged = false;
         suppressClick = false;
         pressedPoint = mapToItem(strip, event.x, event.y);
+        pressedColumn = tile.modelData;
+        pressedBadge = tile.memberCount > 1 && event.x >= badge.x;
       }
     }
     onPositionChanged: function (event) {
@@ -127,7 +218,7 @@ Item {
       var point = mapToItem(strip, event.x, event.y);
       if (!dragged && Math.abs(point.x - pressedPoint.x) + Math.abs(point.y - pressedPoint.y) >= Style.space(6)) {
         suppressClick = true;
-        dragged = controller.beginDrag(tile.modelData, point);
+        dragged = controller.beginDrag(pressedColumn, point);
         if (dragged && controller.bar)
           controller.hideTooltip(tile);
       }
@@ -147,11 +238,13 @@ Item {
       }
     }
     onClicked: function (event) {
-      if (!dragged && !suppressClick)
-        tile.triggerPress(event.button);
+      if (!dragged && !suppressClick) {
+        if (pressedBadge && event.button === Qt.LeftButton) tile.triggerBadgePress(event.button);
+        else tile.triggerPress(event.button, pressedColumn);
+      }
     }
     onEntered: if (controller.bar && !controller.dragging)
-      controller.showTooltip(tile, String(tile.modelData.title || tile.modelData.class) + (controller.statusMessage ? " · " + controller.statusMessage : ""))
+      controller.showTooltip(tile, tile.tooltipText)
     onExited: if (controller.bar)
       controller.hideTooltip(tile)
     onWheel: function (event) {

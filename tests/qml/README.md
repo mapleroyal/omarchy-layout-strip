@@ -26,9 +26,20 @@ Drag/drop coverage also checks that both insertion boundaries around every
 source hide the marker, that moving elsewhere restores it, and that dropping
 back in the original position emits no reorder or focus action.
 
+Stack coverage exercises the actual badge, member popup rows and close controls,
+top-to-bottom order, fixed column identity across representative changes,
+press-time addressing, menu updates after closing members, stale data, popup
+coordination, and clipped forwarded badge targets. Drag tests change the stack
+representative both before and after the drag threshold. Wheel tests follow the
+same window when it floats out of its original stack.
+
+Use `python3 tests/qml/run.py --screenshots /path/to/work/screenshots` for 1x and
+2x renders of the 26-pixel strip in both appearance modes and the member menu.
+
 Only the Wayland-specific container is substituted: `KeyboardPanel.qml`
-preserves the host's open/close coordinator contract without creating a
-layer-shell surface. The bar itself is hosted in an offscreen QtQuick Window.
+preserves the host's open/close coordinator contract in an offscreen QtQuick
+Window, allowing real popup row input without creating a layer-shell surface.
+The bar is also hosted in an offscreen QtQuick Window.
 This does not test compositor keyboard-focus priming or popup layer stacking;
 those need a separate private compositor integration test. The plugin's
 production components are not changed or copied into alternative test versions.

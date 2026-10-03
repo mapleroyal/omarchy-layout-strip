@@ -47,6 +47,39 @@ ShellRoot {
     for(var i=0;i<count;i++) columns.push({address:"0x"+(i+1).toString(16),class:["chatgpt","google-chrome","md.obsidian.Obsidian"][i%3],title:"Test app "+(i+1),size:["small","medium","large"][i%3],focused:i===focus});
     return {reorderAvailable:true,workspaceId:workspace||1,activeAddress:focus>=0?columns[focus].address:"",columns:columns};
   }
+  function stackSnapshot(representative, count, withFloat) {
+    var result = snapshot(3, 0, 13);
+    var members = [];
+    for (var i = 0; i < (count || 3); i++) members.push({address: "0x" + (10 + i).toString(16),
+      class: ["google-chrome", "chatgpt", "md.obsidian.Obsidian"][i % 3],
+      title: ["Top · Browser", "Middle · Chat", "Bottom · Notes"][i % 3], focused: i === representative,
+      floating: false, indexInColumn: i});
+    result.columns[0] = {columnId: "stack-a", address: members[representative].address,
+      class: members[representative].class, title: members[representative].title, size: "small",
+      focused: true, members: members, memberCount: members.length, floating: false};
+    result.columns[1].columnId = "stack-b";
+    result.columns[1].size = "small";
+    result.columns[2].columnId = "float-c";
+    result.columns[2].floating = withFloat !== false;
+    result.columns[2].size = "small";
+    result.activeAddress = members[representative].address;
+    result.reorderAvailable = withFloat === false;
+    return result;
+  }
+  function childNamed(item, name) { return descendants(item, []).filter(function(child) { return child.objectName === name; })[0]; }
+  function badgeTarget(tile) { return fakeBar.clickTargets.filter(function(target) { return target.objectName === "layoutStackTarget" && target.tileItem === tile; })[0]; }
+  function capture(item, name) {
+    var directory = Quickshell.env("STRIP_TEST_ARTIFACTS");
+    if (!directory) return;
+    test.stop();
+    item.grabToImage(function(result) {
+      check(result.saveToFile(directory + "/" + name + ".png"), name + " screenshot saved");
+      item.grabToImage(function(large) {
+        check(large.saveToFile(directory + "/" + name + "-2x.png"), name + " 2x screenshot saved");
+        test.start();
+      }, Qt.size(Math.round(item.width * 2), Math.round(item.height * 2)));
+    });
+  }
   function move(item,x,y) { check(events.mouseMove(item,x,y,1,Qt.NoButton,Qt.NoModifier),"QTest mouse move delivered"); }
   function away() { move(canvas,2,2); }
   Connections { target: widget; function onActionRequested(command) { harness.requestedCommands.push(command); } }
@@ -54,7 +87,7 @@ ShellRoot {
   function allTiles() { return descendants(widget,[]).filter(function(item){return item.objectName==="layoutTile";}); }
   function surfaces() { return descendants(widget,[]).filter(function(item){return item.objectName==="tileSurface";}); }
   function underlines() { return descendants(widget,[]).filter(function(item){return item.objectName==="widthUnderline";}); }
-  function popup() { return widget.resources.filter(function(item){return "contentWidth" in item && "anchorItem" in item && "open" in item;})[0]; }
+  function popup() { return widget.menuPanel; }
   function options() { return descendants(popup().contentItem[0],[]).filter(function(item){return item.objectName==="menuOption";}); }
   function optionHit(option) { return option.children.filter(function(item){return "borderSpec" in item && item.height===Style.space(32);})[0]; }
   function preview(name, after) {
@@ -75,8 +108,19 @@ ShellRoot {
 
   QtObject {
     id: fakeShell
-    property var appLibrary: null
+    property var appLibrary: fixtureIcons
     function updateEntryInline(name,entry) { harness.writes.push({name:name,entry:entry}); }
+  }
+  QtObject {
+    id: fixtureIcons
+    function iconSource(name) {
+      // The real host supplies an app icon index; QPA offscreen has no desktop
+      // theme integration. Use the runner's discovered read-only app assets.
+      var key = String(name).toLowerCase();
+      var path = key.indexOf("chrome") >= 0 ? Quickshell.env("STRIP_TEST_BROWSER_ICON")
+        : key.indexOf("obsidian") >= 0 ? Quickshell.env("STRIP_TEST_NOTES_ICON") : "";
+      return path ? "file://" + path : Quickshell.iconPath(name, true);
+    }
   }
   QtObject {
     id: fakeBar
@@ -133,6 +177,7 @@ ShellRoot {
         property var activeItem: loader.item
         width:widget ? widget.implicitWidth : 0
         height:26
+        Rectangle { anchors.fill: parent; z: -100; color: Color.bar.background }
         Loader {
           id: loader
           anchors.fill: parent
@@ -283,8 +328,8 @@ ShellRoot {
         case 12:
           var popups=widget.resources.filter(function(item){return "contentWidth" in item && "anchorItem" in item && "open" in item;});
           check(popups.length===1 && popups[0].open,"Mode popup actually mapped");
-          var popup=popups[0];
-          var keys=popup.contentItem[0];
+          var shownPopup=popups[0];
+          var keys=shownPopup.contentItem[0];
           var card=keys.parent.parent;
           var choices=harness.options();
           check(choices.length===6,"Mapped popup has scrolling, appearance and widget options");
@@ -300,7 +345,7 @@ ShellRoot {
           });
           break;
         case 13:
-          panel.implicitWidth=600;
+          panel.implicitWidth=900;
           widget.measureGap();
           widget.applySnapshot(harness.snapshot(3,1,4));
           widget.chooseIndication("tiles");
@@ -577,7 +622,7 @@ ShellRoot {
           fakeBar.requestPopout(otherOwner);
           check(!widget.menuOpen && fakeBar.activePopout===otherOwner,"Opening another popup dismisses context menu with independent owner");
           fakeBar.releasePopout(otherOwner);
-          panel.implicitWidth=600;
+          panel.implicitWidth=900;
           widget.persistSetting("widthRatio",0.85);
           widget.chooseIndication("tiles");
           widget.applySnapshot(snapshot(3,0,10));
@@ -696,11 +741,200 @@ ShellRoot {
           move(second,second.width/4,second.height/2);
           events.mouseWheel(second,second.width/4,second.height/2,Qt.NoButton,Qt.NoModifier,0,-120,1);
           check(widget.lastCommand[2]==="0x2","Moving the pointer selects a new wheel target");
+          away();
+          widget.clearWheelAnchor();
+          panel.implicitWidth=900;
+          widget.persistSetting("widthRatio",0.85);
+          widget.chooseIndication("tiles");
+          widget.applySnapshot(stackSnapshot(0));
+          break;
+        case 42:
+          priorTile=tileFor("0xa");
+          var badge=childNamed(priorTile,"stackBadge");
+          check(allTiles().length===3 && priorTile.memberCount===3 && badge.visible,"A stacked column is one tile with a three-window badge");
+          check(closeEnough(priorTile.width,tileFor("0x2").width),"Stack and singleton of equal column width occupy equal strip width");
+          check(childNamed(tileFor("0x3"),"floatingMarker").visible && !childNamed(priorTile,"floatingMarker").visible,
+            "Only floating windows receive the outlined window marker");
+          var mainTarget=fakeBar.clickTargets.filter(function(target){return target.objectName==="layoutTileTarget" && target.tileItem===priorTile;})[0];
+          check(fakeBar.clickTargets.indexOf(badgeTarget(priorTile))>fakeBar.clickTargets.indexOf(mainTarget),"Stack badge forwarding outranks its containing tile");
+          requestedCommands=[];
+          events.mouseClick(priorTile,badge.x+badge.width/2,priorTile.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          check(widget.menuOpen && widget.menuKind==="stack" && requestedCommands.length===0,"Clicking the stack badge opens members without focusing a window");
+          check(widget.menuItems.map(function(item){return item.address;}).join(",")==="0xa,0xb,0xc","Stack popup preserves top-to-bottom member order");
+          check(fakeBar.activePopout===popup().coordinatorKey,"Stack popup participates in the host popup coordinator");
+          capture(hostSlot,"stack-tiles");
+          break;
+        case 43:
+          var choices=options();
+          check(choices.length===3 && choices[0].modelData.label==="Top · Browser" && choices[2].modelData.label==="Bottom · Notes","Actual stack rows show current window titles in layout order");
+          capture(popup().contentItem[0].parent.parent,"stack-menu");
+          break;
+        case 44:
+          var row=optionHit(options()[2]);
+          events.mouseClick(row,row.width/2,row.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          check(widget.lastCommand[1]==="focus" && widget.lastCommand[2]==="0xc" && !widget.menuOpen,"Clicking a real popup row focuses that member and dismisses");
+          widget.applySnapshot(stackSnapshot(2));
+          check(tileFor("0xc")===priorTile && priorTile.modelData.title==="Bottom · Notes","Changing the stack representative updates its icon/title without recreating its tile");
+          events.mouseClick(priorTile,Style.space(8),priorTile.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          check(widget.lastCommand[1]==="focus" && widget.lastCommand[2]==="0xc","Main icon click focuses the current representative");
+          badgeTarget(priorTile).triggerPress(Qt.MiddleButton);
+          check(widget.lastCommand[1]==="close" && widget.lastCommand[2]==="0xc","Forwarded middle click on a stack badge closes only the current member");
+          var next=stackSnapshot(1,2);
+          widget.applySnapshot(next);
+          check(tileFor("0xb")===priorTile && priorTile.memberCount===2,"Closing a representative preserves its surviving column tile and updates count");
+          badgeTarget(priorTile).triggerPress(Qt.LeftButton);
+          check(widget.menuOpen && widget.menuItems.length===2,"Forwarded badge input opens the current surviving stack");
+          break;
+        case 45:
+          var closeControl=childNamed(options()[0],"stackMemberClose");
+          requestedCommands=[];
+          events.mouseClick(closeControl,closeControl.width/2,closeControl.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="close" && widget.lastCommand[2]==="0xa" && !widget.menuOpen,
+            "Stack row close control closes that exact member without focusing it");
+          widget.openStack(badgeTarget(priorTile),priorTile.modelData);
+          var next=stackSnapshot(0,2);
+          next.columns[0].members[1].title="Updated second window";
+          widget.applySnapshot(next);
+          check(widget.menuOpen && widget.menuAnchor===badgeTarget(priorTile) && tileFor("0xa")===priorTile,
+            "Representative metadata changes preserve the open stack popup and anchor");
+          check(widget.menuItems[1].label==="Updated second window" && widget.menuCursor===1,
+            "Open stack popup refreshes titles and preserves the selected member by address");
+          badgeTarget(priorTile).triggerPress(Qt.LeftButton);
+          check(!widget.menuOpen,"Clicking the same stack badge toggles its popup closed");
+          var badge=childNamed(priorTile,"stackBadge");
+          requestedCommands=[];
+          events.mouseWheel(priorTile,badge.x+badge.width/2,priorTile.height/2,Qt.NoButton,Qt.NoModifier,0,-120,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="cycle_window" && widget.lastCommand[2]==="0xa","Wheel over badge preserves the representative window cycle");
+          badgeTarget(priorTile).triggerPress(Qt.RightButton);
+          check(widget.lastCommand[1]==="cycle_width" && widget.lastCommand[2]==="0xa","Right click over badge preserves column width cycling");
+          widget.openStack(badgeTarget(priorTile),priorTile.modelData);
+          widget.applySnapshot(stackSnapshot(0,1));
+          check(!widget.menuOpen && !childNamed(priorTile,"stackBadge").visible && !badgeTarget(priorTile),
+            "Removing the last other member dismisses popup and unregisters its badge target");
+          widget.applySnapshot(stackSnapshot(0));
+          widget.openStack(badgeTarget(priorTile),priorTile.modelData);
+          widget.onBackendError("Disconnected while stack menu was open");
+          check(!widget.menuOpen,"Stale backend data dismisses stack choices");
+          widget.openStack(badgeTarget(priorTile),priorTile.modelData);
+          check(!widget.menuOpen,"Stale stack data cannot reopen member actions");
+          widget.applySnapshot(stackSnapshot(0));
+          widget.chooseIndication("underlines");
+          break;
+        case 46:
+          capture(hostSlot,"stack-underlines");
+          break;
+        case 47:
+          widget.chooseIndication("tiles");
+          widget.applySnapshot(stackSnapshot(0,3,false));
+          requestedCommands=[];
+          var first=tileFor("0xa"), last=tileFor("0x2");
+          events.mousePress(first,Style.space(8),first.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          var point=last.mapToItem(first,last.width-2,last.height/2);
+          events.mouseMove(first,point.x,point.y,1,Qt.LeftButton,Qt.NoModifier);
+          check(widget.dragging,"Dragging stack icon begins whole-column reorder");
+          widget.applySnapshot(stackSnapshot(1,3,false));
+          check(widget.dragging && widget.deferredSnapshot!==null,"Changing the stack representative during drag does not cancel the column grab");
+          events.mouseRelease(first,point.x,point.y,Qt.LeftButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="reorder" && widget.lastCommand[2]==="0xa" && widget.lastCommand[4]==="0x3" && widget.lastCommand[6]==="before",
+            "Dropping stack emits one addressed column reorder and no member focus");
+          widget.applySnapshot(stackSnapshot(1));
+          widget.openStack(badgeTarget(priorTile),priorTile.modelData);
+          var otherOwner={close:function(){}};
+          fakeBar.requestPopout(otherOwner);
+          check(!widget.menuOpen && fakeBar.activePopout===otherOwner,"Another popup dismisses the stack member list");
+          fakeBar.releasePopout(otherOwner);
+          panel.implicitWidth=240;
+          break;
+        case 48:
+          widget.measureGap();
+          widget.setOffset(priorTile.width-Style.space(8),false);
+          var target=badgeTarget(priorTile);
+          check(target && target.x>=0 && target.x+target.width<=widget.viewportWidth && target.width<childNamed(priorTile,"stackBadge").width,
+            "Partially clipped badge forwards only its visible hit area");
+          target.triggerPress(Qt.LeftButton);
+          check(widget.menuOpen && widget.menuAnchor===target,"Visible portion of a clipped stack badge can open its list");
+          widget.setOffset(priorTile.width+widget.itemGap,false);
+          check(!badgeTarget(priorTile) && !widget.menuOpen,"Fully clipped badge unregisters from popup forwarding and closes its menu");
+          widget.setOffset(0,false);
+          widget.openStack(badgeTarget(priorTile),priorTile.modelData);
+          widget.applySnapshot(snapshot(1,0,14));
+          check(!widget.menuOpen,"Workspace change dismisses a stack popup");
+          panel.implicitWidth=900;
+          widget.applySnapshot(stackSnapshot(0));
+          break;
+        case 49:
+          priorTile=tileFor("0xa");
+          requestedCommands=[];
+          events.mousePress(priorTile,Style.space(8),priorTile.height/2,Qt.MiddleButton,Qt.NoModifier,1);
+          widget.applySnapshot(stackSnapshot(1));
+          check(tileFor("0xb")===priorTile,"Representative change during a press retains the grabbed tile");
+          events.mouseRelease(priorTile,Style.space(8),priorTile.height/2,Qt.MiddleButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="close" && widget.lastCommand[2]==="0xa",
+            "Middle release closes the pressed member even if its sibling becomes representative during the press");
+          requestedCommands=[];
+          events.mousePress(priorTile,Style.space(8),priorTile.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          widget.applySnapshot(stackSnapshot(2));
+          events.mouseRelease(priorTile,Style.space(8),priorTile.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="focus" && widget.lastCommand[2]==="0xb",
+            "Main icon click preserves the pressed member across representative changes");
+          widget.applySnapshot(stackSnapshot(0));
+          away();
+          widget.clearWheelAnchor();
+          break;
+        case 50:
+          pressPosition=priorTile.mapToItem(widget,Style.space(8),priorTile.height/2);
+          move(widget,pressPosition.x,pressPosition.y);
+          requestedCommands=[];
+          events.mouseWheel(widget,pressPosition.x,pressPosition.y,Qt.NoButton,Qt.NoModifier,0,-120,1);
+          check(requestedCommands.length===1 && widget.lastCommand[2]==="0xa","Stack wheel initially cycles its representative window");
+          var next=stackSnapshot(1);
+          next.columns[0].members.shift();
+          next.columns[0].memberCount=2;
+          next.columns.splice(1,0,{columnId:"float-a",address:"0xa",class:"google-chrome",title:"Floated stack member",
+            size:"small",floating:true,focused:false,members:[{address:"0xa",class:"google-chrome",title:"Floated stack member",floating:true}]});
+          widget.applySnapshot(next);
+          break;
+        case 51:
+          events.mouseWheel(widget,pressPosition.x,pressPosition.y,Qt.NoButton,Qt.NoModifier,0,-120,1);
+          check(requestedCommands.length===2 && widget.lastCommand[2]==="0xa",
+            "Next stationary-pointer notch follows the same window after it floats out of a stack");
+          widget.applySnapshot(stackSnapshot(0));
+          priorTile=tileFor("0xa");
+          widget.openStack(badgeTarget(priorTile),priorTile.modelData);
+          break;
+        case 52:
+          requestedCommands=[];
+          var row=optionHit(options()[0]);
+          var point=row.mapToItem(popup().contentItem[0],row.width/2,row.height/2);
+          events.mousePress(row,row.width/2,row.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          var next=stackSnapshot(1);
+          next.columns[0].members.shift();
+          next.columns[0].memberCount=2;
+          widget.applySnapshot(next);
+          events.mouseRelease(popup().contentItem[0],point.x,point.y,Qt.LeftButton,Qt.NoModifier,1);
+          check(requestedCommands.length===0,"Removing a member during its popup press never focuses the row that takes its place");
+          widget.closeStackMember("0xa");
+          check(requestedCommands.length===0,"Popup member actions reject an address no longer present in that column");
+          widget.close();
+          widget.applySnapshot(stackSnapshot(0,3,false));
+          break;
+        case 53:
+          priorTile=tileFor("0xa");
+          requestedCommands=[];
+          events.mousePress(priorTile,Style.space(8),priorTile.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          widget.applySnapshot(stackSnapshot(1,3,false));
+          var last=tileFor("0x2");
+          var point=last.mapToItem(priorTile,last.width-2,last.height/2);
+          events.mouseMove(priorTile,point.x,point.y,1,Qt.LeftButton,Qt.NoModifier);
+          check(widget.dragging && widget.dropTarget!==null,"A representative change before the drag threshold still resolves the pressed member's column");
+          events.mouseRelease(priorTile,point.x,point.y,Qt.LeftButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="reorder" && widget.lastCommand[2]==="0xa",
+            "Stack drag preserves the original pressed member across pre-drag focus changes");
           finish();
           break;
         }
       } catch(error) {
-        console.error("HARNESS_ERROR",error.stack||error);
+        console.error("HARNESS_ERROR",String(error),error.stack||"");
         test.stop();
         Qt.quit();
       }

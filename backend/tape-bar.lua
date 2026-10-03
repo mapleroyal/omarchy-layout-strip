@@ -31,8 +31,8 @@ end
 
 function M.new(hl, tape, finish_navigation)
   local self = {protocol_version = 2}
-  local snapshot_positions = {}
-  local cycle_positions = setmetatable({}, {__mode = "k"})
+  local workspace_columns = {}
+  local next_column_id = 0
 
   local function displayed_workspace(monitor_name)
     local workspace, monitor
@@ -81,15 +81,21 @@ function M.new(hl, tape, finish_navigation)
 
   local function window_cycle_state(window)
     if type(omarchy_window_width_cycle_state) ~= "function" then return nil end
-    local original = omarchy_window_width_cycle_state(window)
-    local layout = type(original) == "table" and original.layout
-    local column = layout and layout.name == "scrolling" and layout.column
-    if type(original) == "table" and not original.floating and column and type(column.index) == "number" then
+    -- Restoration metadata is optional enrichment, never the presence source.
+    local ok, original = pcall(omarchy_window_width_cycle_state, window)
+    local layout = ok and type(original) == "table" and type(original.layout) == "table" and original.layout
+    local column = layout and layout.name == "scrolling" and type(layout.column) == "table" and layout.column
+    local function finite(value)
+      return type(value) == "number" and value == value and value ~= math.huge and value ~= -math.huge
+    end
+    if column and not original.floating and finite(column.index) and column.index >= 0 and column.index % 1 == 0
+      and (column.width == nil or finite(column.width) and column.width > 0)
+      and (original.stage == nil or finite(original.stage)) then
       return original
     end
   end
 
-  local function find_column_window(workspace, address, allow_cycle)
+  local function find_column_window(workspace, address, allow_floating)
     if not valid_address(address) then return nil, "Invalid window address" end
     for _, window in ipairs(hl.get_workspace_windows(workspace)) do
       if window.address:lower() == address:lower() then
@@ -97,7 +103,7 @@ function M.new(hl, tape, finish_navigation)
         local column = layout and layout.name == "scrolling" and layout.column
         if window.mapped and not window.hidden and
           ((not window.floating and column and column.index ~= nil)
-            or (allow_cycle and window.floating and window_cycle_state(window))) then
+            or (allow_floating and window.floating)) then
           return window
         end
         return nil, "The window is no longer a visible scrolling column"
@@ -162,68 +168,143 @@ function M.new(hl, tape, finish_navigation)
       end
     end
     if not workspace or workspace.tiled_layout ~= "scrolling" then return result end
-    local by_index, by_cycle = {}, {}
-    local previous_positions = snapshot_positions[workspace.id] or {}
+    local previous = workspace_columns[workspace.id] or {by_member = {}}
+    local by_index, buckets, floating = {}, {}, {}
+    local claimed = {}
+    local function member_key(window)
+      -- Addresses can be reused after a client closes; stable_id cannot.
+      return tostring(window.stable_id or window.address)
+    end
+    local function entry(window, layout, original)
+      return {key = member_key(window), original = original,
+        data = {address = window.address, class = window.class or "", title = window.title or "",
+          focused = active and active.address == window.address or false,
+          floating = window.floating == true,
+          indexInColumn = layout and layout.index_in_column or 0},
+        fullscreen = window.fullscreen ~= 0}
+    end
+    local function identify(bucket)
+      local candidates, selected, count = {}, nil, 0
+      for _, member in ipairs(bucket.entries) do
+        local old = previous.by_member[member.key]
+        if old and not claimed[old.id] then
+          candidates[old] = (candidates[old] or 0) + 1
+        end
+      end
+      for old, matches in pairs(candidates) do
+        if not selected or matches > count or (matches == count and old.id < selected.id) then
+          selected, count = old, matches
+        end
+      end
+      if selected then
+        bucket.id, bucket.last_address = selected.id, selected.address
+      else
+        next_column_id = next_column_id + 1
+        bucket.id = "column:" .. workspace.id .. ":" .. next_column_id
+      end
+      claimed[bucket.id] = true
+    end
+    local function append(bucket, member)
+      bucket.entries[#bucket.entries + 1] = member
+    end
     for _, window in ipairs(hl.get_workspace_windows(workspace)) do
-      local layout = window.layout
-      local column = layout and layout.name == "scrolling" and layout.column
-      local original = window.floating and window_cycle_state(window)
-      if window.mapped and not window.hidden and original then
-        local focused = active and active.address == window.address or false
-        local position = cycle_positions[original]
-        if not position or position.workspace_id ~= workspace.id then
-          position = {workspace_id = workspace.id,
-            index = previous_positions[window.address] or original.layout.column.index}
-          cycle_positions[original] = position
-        end
-        if not by_cycle[original] or focused then
-          by_cycle[original] = {
-            index = position.index, address = window.address, class = window.class or "",
-            title = window.title or "", width = original.stage == 1 and 2 / 3
-              or original.stage == 2 and 0.5 or original.layout.column.width or 0.5,
-            focused = focused, fullscreen = false, cycled = true, cycleStage = original.stage,
-          }
-        end
-      elseif window.mapped and not window.hidden and not window.floating and column and column.index ~= nil then
-        local focused = active and active.address == window.address or false
-        local existing = by_index[column.index]
-        -- A focused stack member can stand for the column; stacking has no UI.
-        if not existing or focused then
-          by_index[column.index] = {
-            index = column.index, address = window.address, class = window.class or "",
-            title = window.title or "", width = column.width or 0.5, focused = focused,
-            fullscreen = window.fullscreen ~= 0,
-          }
+      if window.mapped and not window.hidden then
+        local layout = window.layout
+        local native_column = layout and layout.name == "scrolling" and layout.column
+        if window.floating then
+          local original = window_cycle_state(window)
+          local member = entry(window, original and original.layout, original)
+          local old = previous.by_member[member.key]
+          -- Cycle bookkeeping can vanish after a configuration reload. Window
+          -- presence and action addressing must never depend on that helper.
+          member.position = old and old.tiled_origin and old.index or original and original.layout.column.index
+          member.old = old
+          if monitor and window.size then
+            local scale = monitor.scale or 1
+            local transform = monitor.transform or 0
+            local rotated = transform % 2 == 1
+            local width = (rotated and monitor.height or monitor.width)
+            local reserved = monitor.reserved or {}
+            width = width and width / scale - (reserved.left or 0) - (reserved.right or 0)
+            if width and width > 0 then member.width = window.size.x / width end
+          end
+          member.width = member.width or original and (original.stage == 1 and 2 / 3
+            or original.stage == 2 and 0.5 or original.layout.column.width) or 0.5
+          floating[#floating + 1] = member
+        elseif native_column and native_column.index ~= nil then
+          local bucket = by_index[native_column.index]
+          if not bucket then
+            bucket = {index = native_column.index, width = native_column.width or 0.5, entries = {}}
+            by_index[native_column.index] = bucket
+            buckets[#buckets + 1] = bucket
+          end
+          append(bucket, entry(window, layout))
         end
       end
     end
-    for _, column in pairs(by_index) do columns[#columns + 1] = column end
-    table.sort(columns, function(a, b) return a.index < b.index end)
-    -- Floating a column shifts every later native index. Insert placeholders
-    -- into the live order rather than keying both kinds by those colliding
-    -- indices. Remember the previous logical position for successive cycles.
-    local cycled = {}
-    for _, column in pairs(by_cycle) do cycled[#cycled + 1] = column end
-    if #cycled > 0 then result.reorderAvailable = false end
-    table.sort(cycled, function(a, b)
-      return a.index == b.index and a.address < b.address or a.index < b.index
+    table.sort(buckets, function(a, b) return a.index < b.index end)
+    local tiled_count = #buckets
+    for _, bucket in ipairs(buckets) do identify(bucket) end
+    table.sort(floating, function(a, b)
+      local ai, bi = a.position or math.huge, b.position or math.huge
+      return ai == bi and a.key < b.key or ai < bi
     end)
+    local placeholders = {}
+    for _, member in ipairs(floating) do
+      local position = member.position
+      -- A float split from a stack gets its own tile beside the surviving
+      -- native column. A wholly floated column can keep its existing identity.
+      if position and member.old and claimed[member.old.id] then position = position + 1 end
+      local bucket = {index = position, width = member.width, entries = {member},
+        overlay = true, remembered = position ~= nil}
+      identify(bucket)
+      placeholders[#placeholders + 1] = bucket
+    end
+    -- Native indices close up when a whole column floats. Logical placeholders
+    -- retain their old slots; a newly opened floating app follows tiled columns.
     local last_position = 0
-    for _, column in ipairs(cycled) do
-      local position = math.min(#columns + 1, math.max(last_position + 1, column.index + 1))
-      table.insert(columns, position, column)
+    for _, bucket in ipairs(placeholders) do
+      local position = bucket.index and math.min(#buckets + 1, math.max(last_position + 1, bucket.index + 1))
+        or #buckets + 1
+      table.insert(buckets, position, bucket)
       last_position = position
     end
-    local positions = {}
-    snapshot_positions[workspace.id] = positions
-    for position, column in ipairs(columns) do
-      positions[column.address] = position - 1
-      if #cycled > 0 then column.index = position - 1 end
-      if not column.cycled and (column.fullscreen or (#columns == 1 and hl.get_config("scrolling.fullscreen_on_one_column"))) then
-        column.width = 1
+    if #floating > 0 then result.reorderAvailable = false end
+    local records = {by_member = {}}
+    workspace_columns[workspace.id] = records
+    for position, bucket in ipairs(buckets) do
+      table.sort(bucket.entries, function(a, b)
+        return a.data.indexInColumn == b.data.indexInColumn and a.key < b.key
+          or a.data.indexInColumn < b.data.indexInColumn
+      end)
+      local representative, focused, any_floating, cycled, fullscreen = nil, false, false, false, false
+      for _, member in ipairs(bucket.entries) do
+        local data = member.data
+        if data.focused then representative, focused = member, true
+        elseif not focused and data.address == bucket.last_address then representative = member end
+        any_floating = any_floating or data.floating
+        cycled = cycled or member.original ~= nil
+        fullscreen = fullscreen or not data.floating and member.fullscreen
       end
-      column.size = column.width < (0.5 + 0.667) / 2 and "small"
-        or column.width < (0.667 + 1) / 2 and "medium" or "large"
+      representative = representative or bucket.entries[1]
+      local selected = representative.data
+      local width = bucket.overlay and representative.width or bucket.width
+      if not bucket.overlay and (fullscreen or (tiled_count == 1 and hl.get_config("scrolling.fullscreen_on_one_column"))) then
+        width = 1
+      end
+      local column = {columnId = bucket.id, index = position - 1, address = selected.address,
+        class = selected.class, title = selected.title, width = width, focused = focused,
+        fullscreen = fullscreen, floating = any_floating, cycled = cycled,
+        cycleStage = representative.original and representative.original.stage,
+        members = setmetatable({}, array), memberCount = #bucket.entries,
+        size = width < (0.5 + 0.667) / 2 and "small" or width < (0.667 + 1) / 2 and "medium" or "large"}
+      local record = {id = bucket.id, address = selected.address, index = position - 1,
+        tiled_origin = not bucket.overlay or bucket.remembered}
+      for _, member in ipairs(bucket.entries) do
+        column.members[#column.members + 1] = member.data
+        records.by_member[member.key] = record
+      end
+      columns[#columns + 1] = column
     end
     return result
   end

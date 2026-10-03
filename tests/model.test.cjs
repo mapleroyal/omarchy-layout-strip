@@ -41,6 +41,19 @@ assert.equal(model.dropTarget(columns.slice(0, 1), [30], gap, '0x1', 10), null);
 assert.equal(model.dropTarget(columns, widths, gap, '0xdead', 10), null);
 assert.equal(model.dropTarget(columns, widths, gap, '0x1', NaN), null);
 
+// The pressed member may cease to represent its column before drag starts.
+// It still owns the same source column; destinations use live representatives.
+const stacked = [
+  {columnId: 'one', address: '0xb', members: [{address: '0xa'}, {address: '0xb'}]},
+  {columnId: 'two', address: '0xc', members: [{address: '0xc'}]},
+];
+const stackDrop = model.dropTarget(stacked, [40, 40], gap, '0xa', 90);
+assert.equal(stackDrop.changed, true);
+assert.equal(stackDrop.address, '0xc');
+assert.equal(stackDrop.side, 'after');
+assert.equal(model.columnKey(stacked[0]), model.columnKey({...stacked[0], address: '0xa'}));
+assert.equal(model.columnKey({address: '0xa'}), '0xa', 'legacy snapshots retain address identity');
+
 // Saved proportional widths tolerate malformed/old preferences and obey the
 // agreed 85% maximum without introducing a hardcoded pixel limit.
 for (const invalid of [undefined, null, '', 'bad', -1, 0, Infinity, NaN])

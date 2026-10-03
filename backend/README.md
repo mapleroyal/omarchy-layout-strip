@@ -46,11 +46,13 @@ be rebuilt with the matching Lua sources before fullscreen tracking is enabled.
 
 Check `omarchy_tape_bar.protocol_version == 2` before requests. Every reply contains `protocolVersion: 2` and a boolean `ok`.
 
-- `snapshot(monitor)` is read-only and returns one monitor's column state.
+- `snapshot(monitor)` is read-only and returns one monitor's column state. Each entry has a `columnId` stable across representative/focus changes, an addressed `address` for its active or last-used member, `memberCount`, and `members` ordered by compositor `index_in_column`. Members expose `address`, `class`, `title`, `focused`, `floating`, and `indexInColumn`. Existing representative fields remain available. IDs belong to the current Lua adapter lifetime, not durable storage.
 - `snapshot_all({monitor1, monitor2})` returns `{ok, protocolVersion, snapshots:[...]}`.
 - `protect_region(monitor, x, y, width, height, owner)` refreshes one input lease.
 - `protect_regions({{monitor=...,x=...,y=...,width=...,height=...},...}, owner)` refreshes or clears a batch independently of state polling.
-- `focus(address, workspaceId, monitor)`, `close(...)`, `cycle_width(...)`, and `reorder(address, targetAddress, side, workspaceId, monitor)` keep addressed action validation. Width cycling reads the live column width and calls native addressed resizing to cycle half, two-thirds, full, and half again. It preserves keyboard focus and pointer position, with camera compensation for the visible focused or largest unchanged column.
+- `focus(address, workspaceId, monitor)`, `close(...)`, `cycle_window(address, workspaceId, monitor, direction)`, `cycle_width(...)`, and `reorder(address, targetAddress, side, workspaceId, monitor)` keep addressed action validation. Width cycling reads the live column width and calls native addressed resizing to cycle half, two-thirds, full, and half again. It preserves keyboard focus and pointer position, with camera compensation for the visible focused or largest unchanged column.
+
+Mapped, visible floating windows receive their own entries with `floating: true`, whether or not Super+O restoration state is available. Former tiled windows retain a remembered strip position; a member detached from a stack gets a separate neighboring tile. Floating windows with no remembered tiled position follow tiled entries. `focus`, `close`, and `cycle_window` accept these windows. `cycle_width` and reorder endpoints remain tiled-only, and snapshots disable drag reordering while any floats are present.
 
 Region coordinates are global logical pixels. Both positive dimensions register a region; both zero clear only the supplied owner's registration. A replacement shell must use a new owner token. Leases expire after 3500ms, even when a shell dies without clearing. One owner can register one region per monitor. Each snapshot exposes `nativeProtocolVersion`, `capabilities.addressedCamera`, `capabilities.ownedRegions`, `reorderAvailable`, and `protectRegionAvailable`. Missing native-v2 capabilities disable unsupported operations rather than guessing at another protocol.
 

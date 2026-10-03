@@ -1,6 +1,7 @@
 import QtQuick
+import "Model.js" as Model
 
-// Stable addresses own delegate identity; title, focus, width, and camera
+// Stable column identities own delegates; representative address, focus, and
 // metadata can refresh independently of a pointer grab or popup anchor.
 ListModel {
   id: root
@@ -14,25 +15,26 @@ ListModel {
       return;
     var nextSignatures = {};
     for (var i = 0; i < rows.length; i++) {
-      var address = rows[i].address;
+      var key = Model.columnKey(rows[i]);
       var rowSignature = JSON.stringify(rows[i]);
-      nextSignatures[address] = rowSignature;
+      nextSignatures[key] = rowSignature;
       var found = -1;
       for (var j = i; j < count; j++) {
-        if (get(j).columnData.address === address) {
+        if (get(j).columnId === key) {
           found = j;
           break;
         }
       }
       if (found < 0)
         insert(i, {
-          columnData: rows[i]
+          columnId: key,
+          columnJson: rowSignature
         });
       else {
         if (found !== i)
           move(found, i, 1);
-        if (signatures[address] !== rowSignature)
-          setProperty(i, "columnData", rows[i]);
+        if (signatures[key] !== rowSignature)
+          setProperty(i, "columnJson", rowSignature);
       }
     }
     if (count > rows.length)

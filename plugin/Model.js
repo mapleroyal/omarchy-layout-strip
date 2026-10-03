@@ -4,6 +4,18 @@ function sizeFactor(size) {
 
 function validAddress(address) { return /^0x[0-9a-f]+$/i.test(String(address || "")); }
 
+function columnKey(column) { return String(column.columnId || column.address || ""); }
+
+function members(column) {
+  if (!column) return [];
+  if (Array.isArray(column.members)) return column.members;
+  return [column];
+}
+
+function containsAddress(column, address) {
+  return members(column).some(function(member) { return member.address === address; });
+}
+
 function widthRatio(value) {
   var ratio = Number(value);
   return isFinite(ratio) && ratio > 0 ? Math.min(0.85, ratio) : 0.85;
@@ -15,7 +27,7 @@ function dropTarget(columns, widths, gap, source, point) {
   if (columns.length < 2 || !isFinite(point)) return null;
   var position = 0, boundary = columns.length, sourceIndex = -1;
   for (var i = 0; i < columns.length; i++) {
-    if (columns[i].address === source) sourceIndex = i;
+    if (containsAddress(columns[i], source)) sourceIndex = i;
     if (boundary === columns.length && point < position + widths[i] / 2) boundary = i;
     position += widths[i] + gap;
   }

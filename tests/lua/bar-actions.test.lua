@@ -215,13 +215,14 @@ windows[1].hidden = false
 local first_cycle = window_cycles["0x1"]
 window_cycles["0x1"] = nil
 for _, action in ipairs({"cycle_window", "focus", "close"}) do
-  failure(window_cycle[action]("0x1", 1, "eDP-1"), "no longer a visible scrolling column")
+  assert(success(window_cycle[action]("0x1", 1, "eDP-1")))
 end
 window_cycles["0x1"] = first_cycle
 first_cycle.floating = true
-failure(window_cycle.cycle_window("0x1", 1, "eDP-1"), "no longer a visible scrolling column")
+assert(success(window_cycle.cycle_window("0x1", 1, "eDP-1")))
 first_cycle.floating = false
-assert(#cycle_calls == cycle_count and #cycle_invalidated == cycle_invalidation_count and #dispatched == dispatch_count)
+assert(#cycle_calls == cycle_count + 2 and #cycle_invalidated == cycle_invalidation_count + 2 and #dispatched == dispatch_count + 2)
+cycle_invalidation_count = #cycle_invalidated
 cycle_reply = {ok=false,error="Window cycle failed"}
 failure(window_cycle.cycle_window("0x1", 1, "eDP-1"), "Window cycle failed")
 assert(#cycle_invalidated == cycle_invalidation_count)
@@ -229,10 +230,10 @@ omarchy_cycle_window_width = nil
 failure(window_cycle.cycle_window("0x1", 1, "eDP-1"), "Super+O window cycle is unavailable")
 
 -- A lone floating cycle keeps its actual stage size, despite single-column
--- fullscreen configuration. Unrelated floating windows never enter the strip.
+-- fullscreen configuration. Presence does not depend on cycle bookkeeping.
 windows[2].hidden, windows[3].hidden = true, true
 function hl.get_config() return true end
 assert(columns(window_cycle.snapshot("eDP-1"))[1].size == "small")
 omarchy_window_width_cycle_state = nil
-assert(#columns(window_cycle.snapshot("eDP-1")) == 0)
+assert(#columns(window_cycle.snapshot("eDP-1")) == 1)
 print("Bar action contracts passed (fake compositor; no real windows changed)")

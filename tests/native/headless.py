@@ -15,8 +15,13 @@ import time
 PARSER = argparse.ArgumentParser(description=__doc__)
 PARSER.add_argument('--plugin', required=True, type=Path)
 PARSER.add_argument('--output', required=True, type=Path)
+PARSER.add_argument('--cycle-bindings', type=Path, help='Read and isolate the Super+O cycle functions from this bindings.lua; never load the full desktop config')
+PARSER.add_argument('--baseline-bar', type=Path, help='Optional previous tape-bar.lua for an old/new regression comparison')
+PARSER.add_argument('--collections-only', action='store_true', help='Run only floating-window and stacked-column lifecycle checks')
 PARSER.add_argument('--parent-display', type=Path, help='Explicit private headless compositor socket; never the login socket')
 ARGS = PARSER.parse_args()
+if (ARGS.collections_only or ARGS.baseline_bar) and not ARGS.cycle_bindings:
+    PARSER.error('--collections-only and --baseline-bar require --cycle-bindings')
 REPO = Path(__file__).resolve().parents[2]
 OUT = ARGS.output.resolve()
 OUT.mkdir(parents=True, exist_ok=True)
@@ -52,6 +57,14 @@ omarchy_tape_bar = _testIntegration.bar
 _focusEvents=0
 _focusListener=hl.on("window.active",function() _focusEvents=_focusEvents+1 end)
 ''')
+if ARGS.cycle_bindings:
+    bindings = ARGS.cycle_bindings.read_text()
+    start = bindings.index('local floating_width_cycle_state = {}')
+    finish = bindings.index('local function cycle_focused_window_width()', start)
+    extracted = OUT / 'window-width-cycle.lua'
+    extracted.write_text(bindings[start:finish])
+    with config.open('a') as stream:
+        stream.write('\ndofile(' + json.dumps(str(extracted)) + ')\n')
 compositor = None
 clients = []
 cases = []
@@ -470,6 +483,141 @@ def check_fullscreen_swipes():
         assert windows()[name]['size'] == before[name]['size']
     cases.append({'case': 'default_fullscreen_handler_camera_rejected_without_mutation'})
 
+def check_window_collections():
+    first_case = len(cases)
+    assert ARGS.cycle_bindings, 'Window collection checks require --cycle-bindings'
+    evaluate('return hl.dispatch(hl.dsp.focus({monitor="HEADLESS-1"}))')
+    evaluate('return hl.dispatch(hl.dsp.focus({workspace="9"}))')
+    for title in ['cycle-a', 'cycle-b', 'cycle-c']:
+        launch(title)
+
+    def snapshot(): return reply('omarchy_tape_bar.snapshot("HEADLESS-1")')
+    def column(title):
+        address = addr(title)
+        return next(c for c in snapshot()['columns'] if any(m['address'] == address for m in c['members']))
+    def cycle(title, direction=1, via_bar=False):
+        if via_bar:
+            result = reply('omarchy_tape_bar.cycle_window(' + json.dumps(addr(title)) + ',9,"HEADLESS-1",' + str(direction) + ')')
+            assert result['ok'], result
+        else:
+            focus(title)
+            assert evaluate('return omarchy_cycle_window_width(hl.get_active_window(),' + str(direction) + ').ok') == 'true'
+    def cycle_state(title):
+        return evaluate('local w;for _,c in ipairs(hl.get_windows()) do if c.address==' + json.dumps(addr(title)) + ''' then w=c end end;
+            local s=omarchy_window_width_cycle_state(w);return tostring(w.stable_id)..":"..tostring(w.floating)..":"..tostring(s and s.stage)..":"..tostring(w.hidden)''')
+
+    initial = column('cycle-b')
+    if ARGS.baseline_bar:
+        evaluate('_baselineBar=dofile(' + json.dumps(str(ARGS.baseline_bar.resolve())) + ').new(hl,_testTape,function(r) return r end)')
+        reply('_baselineBar.snapshot("HEADLESS-1")')
+    cycle('cycle-b')
+    before = cycle_state('cycle-b')
+    floating = column('cycle-b')
+    assert floating['floating'] and floating['columnId'] == initial['columnId']
+    if ARGS.baseline_bar:
+        assert addr('cycle-b') in [c['address'] for c in reply('_baselineBar.snapshot("HEADLESS-1")')['columns']]
+    launch('cycle-d')
+    after_launch = column('cycle-b')
+    after = cycle_state('cycle-b')
+    assert after_launch['columnId'] == initial['columnId'] and after_launch['index'] == initial['index']
+    assert after_launch['floating'] and not after_launch['focused']
+    if ARGS.baseline_bar:
+        assert addr('cycle-b') in [c['address'] for c in reply('_baselineBar.snapshot("HEADLESS-1")')['columns']]
+    cases.append({'case': 'super_o_float_survives_new_client', 'cycleStateBefore': before, 'cycleStateAfter': after})
+
+    # Re-executing the actual cycle section reproduces config reload's lost
+    # local state without resetting the bar's own history. Visibility must no
+    # longer depend on this optional keyboard integration state.
+    evaluate('dofile(' + json.dumps(str(OUT / 'window-width-cycle.lua')) + ')')
+    assert ':nil:' in cycle_state('cycle-b')
+    lost_state = column('cycle-b')
+    assert lost_state['floating'] and lost_state['columnId'] == initial['columnId']
+    assert lost_state['index'] == initial['index']
+    baseline_missing = None
+    if ARGS.baseline_bar:
+        baseline = reply('_baselineBar.snapshot("HEADLESS-1")')
+        baseline_missing = addr('cycle-b') not in [c['address'] for c in baseline['columns']]
+        assert baseline_missing, baseline
+    cases.append({'case': 'float_survives_lost_cycle_state', 'previousBackendLostTile': baseline_missing})
+    ctl('reload')
+    assert not ctl('configerrors'), ctl('configerrors')
+    assert column('cycle-b')['floating']
+    launch('cycle-e')
+    assert column('cycle-b')['floating']
+    cases.append({'case': 'float_survives_full_reload_and_new_client'})
+
+    focused = active()
+    cycle('cycle-b', via_bar=True)
+    assert active() == focused
+    cycle('cycle-b', via_bar=True)
+    cycle('cycle-b', via_bar=True)
+    assert not windows()['cycle-b']['floating']
+    cases.append({'case': 'strip_cycle_returns_reloaded_float_to_tiling_without_focus_change'})
+
+    # Start fresh for real native stack semantics and top-to-bottom membership.
+    evaluate('return hl.dispatch(hl.dsp.focus({workspace="10"}))')
+    for title in ['stack-a', 'stack-b', 'stack-c']:
+        launch(title)
+    focus('stack-b')
+    assert evaluate('return hl.dispatch(hl.dsp.layout("consume_or_expel prev")).ok') == 'true'
+    stack = column('stack-a')
+    assert stack['memberCount'] == 2
+    assert [m['title'] for m in stack['members']] == ['stack-a', 'stack-b']
+    assert [m['indexInColumn'] for m in stack['members']] == [0, 1]
+    assert windows()['stack-a']['at'][1] < windows()['stack-b']['at'][1]
+    fields = evaluate('local w=hl.get_active_window();local r={};for k,v in pairs(w.layout) do r[#r+1]=k..":"..tostring(v) end;for k,v in pairs(w.layout.column) do r[#r+1]="column."..k..":"..tostring(v) end;return table.concat(r,"\\n")')
+    cases.append({'case': 'stack_members_follow_real_vertical_order', 'titles': [m['title'] for m in stack['members']], 'nativeLayoutFields': fields})
+    stack_id = stack['columnId']
+    focus('stack-a')
+    assert column('stack-a')['columnId'] == stack_id and column('stack-a')['address'] == addr('stack-a')
+    focus('stack-c')
+    assert column('stack-a')['address'] == addr('stack-a')
+    result = reply('omarchy_tape_bar.focus(' + json.dumps(addr('stack-b')) + ',10,"HEADLESS-1")')
+    assert result['ok'] and active() == addr('stack-b'), result
+    assert column('stack-a')['columnId'] == stack_id and column('stack-a')['address'] == addr('stack-b')
+    cases.append({'case': 'stack_identity_and_last_used_icon_survive_focus_changes'})
+
+    source, target = addr('stack-b'), addr('stack-c')
+    result = reply('omarchy_tape_bar.reorder(' + json.dumps(source) + ',' + json.dumps(target) + ',"after",10,"HEADLESS-1")')
+    assert result['ok'] and result['changed'], result
+    moved = column('stack-a')
+    assert moved['columnId'] == stack_id and moved['memberCount'] == 2
+    assert [m['title'] for m in moved['members']] == ['stack-a', 'stack-b']
+    assert moved['index'] == column('stack-c')['index'] + 1
+    cases.append({'case': 'drag_reorders_whole_native_stack'})
+
+    focus('stack-b')
+    assert evaluate('return omarchy_cycle_window_width(hl.get_active_window(),1).ok') == 'true'
+    assert column('stack-b')['floating'] and column('stack-b')['memberCount'] == 1
+    assert column('stack-a')['memberCount'] == 1 and column('stack-a')['columnId'] == stack_id
+    launch('stack-d')
+    assert column('stack-b')['floating']
+    focus('stack-b')
+    for _ in range(2):
+        assert evaluate('return omarchy_cycle_window_width(hl.get_active_window(),1).ok') == 'true'
+    restored = column('stack-a')
+    assert restored['memberCount'] == 2 and restored['columnId'] == stack_id
+    assert [m['title'] for m in restored['members']] == ['stack-a', 'stack-b']
+    cases.append({'case': 'stack_member_float_launch_and_restore'})
+
+    # Exercise the same arrangement on a real portrait headless output.
+    evaluate('hl.monitor({output="HEADLESS-2",mode="900x1440@60",position="1440x0",scale=1})')
+    wait_for(lambda: any(m['name'] == 'HEADLESS-2' and m['width'] == 900 and m['height'] == 1440 for m in json.loads(ctl('-j','monitors'))))
+    evaluate('return hl.dispatch(hl.dsp.focus({monitor="HEADLESS-2"}))')
+    evaluate('return hl.dispatch(hl.dsp.focus({workspace="11"}))')
+    for title in ['portrait-a', 'portrait-b']:
+        launch(title)
+    focus('portrait-b')
+    assert evaluate('return hl.dispatch(hl.dsp.layout("consume_or_expel prev")).ok') == 'true'
+    portrait = reply('omarchy_tape_bar.snapshot("HEADLESS-2")')['columns']
+    assert len(portrait) == 1 and portrait[0]['memberCount'] == 2
+    assert [m['title'] for m in portrait[0]['members']] == ['portrait-a', 'portrait-b']
+    assert windows()['portrait-a']['at'][1] < windows()['portrait-b']['at'][1]
+    cases.append({'case': 'portrait_stack_members_follow_vertical_order'})
+    (OUT / 'collections-snapshots.json').write_text(json.dumps({'afterLaunch': after_launch,
+        'lostCycleState': lost_state, 'restoredStack': restored, 'portraitStack': portrait}, indent=2) + '\n')
+    print(str(len(cases) - first_case) + ' private window-collection lifecycle cases passed')
+
 try:
     with (OUT/'compositor.log').open('w') as log:
         compositor=subprocess.Popen(['Hyprland','--config',str(config)],env=env,stdout=log,stderr=subprocess.STDOUT,start_new_session=True)
@@ -484,6 +632,9 @@ try:
     else: raise RuntimeError('private compositor startup timeout')
     for monitor in ['HEADLESS-1','HEADLESS-2']: ctl('output','create','headless',monitor)
     assert not ctl('configerrors'),ctl('configerrors')
+    # Wait for modes to become usable; allocator failures can leave a mapped
+    # headless output at 0x0 without making compositor startup fail.
+    wait_for(lambda: len(json.loads(ctl('-j','monitors'))) == 2 and all(m['width'] == 1440 and m['height'] == 900 for m in json.loads(ctl('-j','monitors'))))
     monitors=json.loads(ctl('-j','monitors','all'))
     assert all(m['name'].startswith(('HEADLESS-','WAYLAND-')) for m in monitors),monitors
     active_monitors=json.loads(ctl('-j','monitors'))
@@ -491,6 +642,11 @@ try:
     (OUT/'monitors.json').write_text(json.dumps(monitors,indent=2))
     evaluate('return hl.dispatch(hl.dsp.focus({monitor="HEADLESS-1"}))')
     evaluate('return hl.dispatch(hl.dsp.focus({workspace="1"}))')
+    if ARGS.collections_only:
+        check_window_collections()
+        assert not ctl('configerrors'), ctl('configerrors')
+        (OUT / 'results.json').write_text(json.dumps(cases, indent=2) + '\n')
+        raise SystemExit(0)
     for title in 'ABCDEFG': launch(title)
     evaluate('return hl.dispatch(hl.dsp.focus({monitor="HEADLESS-2"}))')
     evaluate('return hl.dispatch(hl.dsp.focus({workspace="2"}))')
@@ -579,6 +735,8 @@ try:
     check_background_widths()
     check_bar_browse_pointer()
     check_fullscreen_swipes()
+    if ARGS.cycle_bindings:
+        check_window_collections()
     assert not ctl('configerrors'),ctl('configerrors')
     (OUT/'results.json').write_text(json.dumps(cases,indent=2)+'\n')
     print(f'{len(cases)} private two-output compositor cases passed')

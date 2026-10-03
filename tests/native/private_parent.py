@@ -16,6 +16,9 @@ parser.add_argument('--weston-build', required=True, type=Path)
 parser.add_argument('--aquamarine-build', required=True, type=Path)
 parser.add_argument('--plugin', required=True, type=Path)
 parser.add_argument('--output', required=True, type=Path)
+parser.add_argument('--cycle-bindings', type=Path)
+parser.add_argument('--baseline-bar', type=Path)
+parser.add_argument('--collections-only', action='store_true')
 args = parser.parse_args()
 build = args.weston_build.resolve()
 out = args.output.resolve()
@@ -48,9 +51,13 @@ try:
         raise RuntimeError('Private Weston startup timeout')
     child_env = os.environ.copy()
     child_env['LD_LIBRARY_PATH'] = str(args.aquamarine_build.resolve())
+    child_args = []
+    if args.cycle_bindings: child_args += ['--cycle-bindings', str(args.cycle_bindings.resolve())]
+    if args.baseline_bar: child_args += ['--baseline-bar', str(args.baseline_bar.resolve())]
+    if args.collections_only: child_args += ['--collections-only']
     result = subprocess.run(['python3', str(Path(__file__).with_name('headless.py')),
         '--plugin', str(args.plugin.resolve()), '--output', str(out),
-        '--parent-display', str(runtime / 'layout-strip-parent')], env=child_env)
+        '--parent-display', str(runtime / 'layout-strip-parent')] + child_args, env=child_env)
     raise SystemExit(result.returncode)
 finally:
     if parent is not None and parent.poll() is None:

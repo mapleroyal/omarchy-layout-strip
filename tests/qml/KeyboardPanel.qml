@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import qs.Commons
 
 // The suite exercises real QtQuick input on an offscreen Window. Only the
@@ -14,8 +15,19 @@ QtObject {
   property int contentHeight: 200
   property Item focusTarget: null
   readonly property var coordinatorKey: owner || root
-  property Item holder: Item { width: root.contentWidth; height: root.contentHeight }
-  default property alias contentItem: root.holder.children
+  property Window window: Window {
+    width: root.contentWidth
+    height: root.contentHeight
+    visible: root.open
+    color: Color.popups.background
+    Rectangle { anchors.fill: parent; color: Color.popups.background }
+    Item {
+      id: holder
+      anchors.fill: parent
+      anchors.margins: root.padding
+    }
+  }
+  default property alias contentItem: holder.children
   function fittedContentWidth(value) { return value; }
   function fittedContentHeight(value) { return value + padding * 2; }
   onOpenChanged: {

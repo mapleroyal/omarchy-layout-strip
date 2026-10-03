@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Real QtTest input offscreen; no live surfaces, backend actions, or writes."""
 import json
+import argparse
 import os
 from pathlib import Path
 import re
@@ -11,6 +12,11 @@ import tempfile
 
 directory = Path(__file__).resolve().parent
 repo = directory.parent.parent
+parser = argparse.ArgumentParser(description=__doc__)
+parser.add_argument("--screenshots", type=Path, help="Save optional 1x and 2x offscreen visual checks here")
+args = parser.parse_args()
+if args.screenshots:
+    args.screenshots.mkdir(parents=True, exist_ok=True)
 with tempfile.TemporaryDirectory(prefix="strip-qml-") as temporary:
     config = Path(temporary)
     source = (directory / "shell.qml").read_text()
@@ -34,6 +40,12 @@ with tempfile.TemporaryDirectory(prefix="strip-qml-") as temporary:
             (config / "Ui" / entry.name).symlink_to(entry)
     shutil.copy2(directory / "KeyboardPanel.qml", config / "Ui" / "KeyboardPanel.qml")
     environment = dict(os.environ, QT_QPA_PLATFORM="offscreen", QT_QUICK_BACKEND="software", STRIP_TEST_POPUP="0")
+    for name, candidate in (("STRIP_TEST_BROWSER_ICON", "/usr/share/icons/hicolor/32x32/apps/google-chrome.png"),
+                            ("STRIP_TEST_NOTES_ICON", "/usr/share/icons/hicolor/512x512/apps/obsidian.png")):
+        if Path(candidate).is_file():
+            environment[name] = candidate
+    if args.screenshots:
+        environment["STRIP_TEST_ARTIFACTS"] = str(args.screenshots.resolve())
     for key in ("WAYLAND_DISPLAY", "DISPLAY", "HYPRLAND_INSTANCE_SIGNATURE", "QT_QPA_PLATFORMTHEME", "QT_IM_MODULE"):
         environment.pop(key, None)
     result = subprocess.run(["qs", "-p", str(config), "--no-color"], env=environment,

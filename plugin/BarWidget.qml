@@ -24,6 +24,7 @@ BarWidget {
   property real geometryGap: 0
   property var placement: ({allocation: 0})
   property string menuKind: "general"
+  property string menuColumnId: ""
   property string placementRegion: "left"
   property var placementChoices: []
   property var deferredSnapshot: null
@@ -48,6 +49,7 @@ BarWidget {
   readonly property var hostCapabilities: HostAdapter.capabilities(bar, root, surface)
   readonly property Item stripItem: strip
   readonly property Item viewportItem: viewport
+  readonly property var menuPanel: stripMenu
   property bool dragging: false
   property var dragColumn: null
   property int dragWorkspace: 0
@@ -77,6 +79,7 @@ BarWidget {
   readonly property string indicationMode: setting("indicationMode", "underlines") === "tiles" ? "tiles" : "underlines"
   readonly property real iconSize: Style.bar.iconCanvas
   readonly property real itemPadding: Style.space(6)
+  readonly property real stackAllowance: Style.space(18)
   readonly property real itemGap: Style.space(4)
   readonly property real arrowSize: Style.bar.statusSlot
   readonly property real edgeWidth: Style.space(4)
@@ -112,9 +115,15 @@ BarWidget {
     var factor = Model.sizeFactor(column.size);
     // Include the inset outside the scaled visual width so painted tiles have
     // exactly 1:1.5:2 widths, rather than scaling only their inner icon area.
+    // Reserve badge room uniformly so a stack does not imply a wider column.
     return indicationMode === "tiles"
-      ? (iconSize + itemPadding * 2) * factor + Style.space(2)
-      : iconSize * factor + itemPadding * 2;
+      ? (iconSize + itemPadding * 2 + Style.space(10)) * factor + Style.space(2)
+      : iconSize * factor + itemPadding * 2 + Style.space(10);
+  }
+
+  function stackBadgeWidth(column) {
+    var count = Model.members(column).length;
+    return count > 1 ? stackAllowance : 0;
   }
 
   ColumnModel { id: columnModel }
@@ -172,7 +181,9 @@ BarWidget {
     backendStale = false;
     if (dragging || resizing) {
       var sameWorkspace = data.workspaceId === snapshot.workspaceId;
-      var sourceExists = !dragging || data.columns.some(function(column) { return column.address === dragColumn.address; });
+      var sourceExists = !dragging || data.columns.some(function(column) {
+        return Model.columnKey(column) === Model.columnKey(dragColumn) && Model.containsAddress(column, dragColumn.address);
+      });
       if (sameWorkspace && sourceExists) { deferredSnapshot = data; return; }
       deferredSnapshot = null;
       cancelDrag();
@@ -182,9 +193,16 @@ BarWidget {
     if (signature === lastSnapshot) return;
     var changedWorkspace = data.workspaceId !== lastWorkspace;
     var changedFocus = data.activeAddress !== lastFocused;
-    if (menuOpen && changedWorkspace) { close(); menuAnchor = null; }
+    var selectedMember = menuKind === "stack" && menuItems[menuCursor] ? menuItems[menuCursor].address : "";
+    if (menuOpen && (changedWorkspace || (menuKind === "stack" && !data.columns.some(function(column) {
+      return Model.columnKey(column) === menuColumnId && Model.members(column).length > 1;
+    })))) close();
     syncColumns(data.columns);
     snapshot = data;
+    if (menuOpen && menuKind === "stack") {
+      var selectedIndex = menuItems.findIndex(function(item) { return item.address === selectedMember; });
+      menuCursor = selectedIndex >= 0 ? selectedIndex : Math.min(menuCursor, menuItems.length - 1);
+    }
     lastSnapshot = signature;
     lastWorkspace = data.workspaceId || 0;
     lastFocused = data.activeAddress || "";
@@ -201,6 +219,7 @@ BarWidget {
   function onBackendError(error) {
     queryError = String(error || "Layout data is unavailable");
     backendStale = true;
+    if (menuKind === "stack") close();
   }
   function onBackendActionFinished(result) {
     actionBusy = false;
@@ -450,12 +469,14 @@ BarWidget {
     if (wheelAnchorWorkspace !== snapshot.workspaceId ||
         Math.abs(point.x - wheelAnchorPoint.x) > 1 || Math.abs(point.y - wheelAnchorPoint.y) > 1)
       clearWheelAnchor();
-    var anchored = columns.find(function(item) { return item.address === wheelAnchorAddress; });
+    var anchored = columns.find(function(item) { return Model.containsAddress(item, wheelAnchorAddress); });
     if (!anchored) clearWheelAnchor();
-    column = anchored || column;
+    // Cycling a stack member can split it into its own floating tile. Keep the
+    // original window selected even when its representative or column changes.
+    column = anchored ? Object.assign({}, anchored, {address: wheelAnchorAddress}) : column;
     if (column) {
       // Width changes can move a neighboring tile under a stationary pointer.
-      // Keep scrolling the original address until the pointer moves, even if
+      // Keep scrolling the original window until the pointer moves, even if
       // the next event lands on another tile or on the strip's blank space.
       wheelAnchorAddress = column.address;
       wheelAnchorWorkspace = snapshot.workspaceId;
@@ -486,8 +507,35 @@ BarWidget {
     menuOpen = true;
   }
 
-  function close() { menuOpen = false; }
+  function openStack(anchor, column) {
+    if (dragging || resizing || backendStale || Model.members(column).length < 2) return;
+    var key = Model.columnKey(column);
+    if (menuOpen && menuKind === "stack" && menuColumnId === key) { close(); return; }
+    clearWheelAnchor();
+    scrollDirection = 0;
+    hoverArmed = false;
+    hideTooltip(anchor);
+    menuColumnId = key;
+    menuKind = "stack";
+    menuAnchor = anchor;
+    menuCursor = Math.max(0, menuItems.findIndex(function(item) { return item.address === column.address; }));
+    menuOpen = true;
+  }
+
+  function close() { menuOpen = false; menuAnchor = null; }
   function closeForPopoutSwitch() { close(); }
+
+  function focusStackMember(address) {
+    if (!menuOpen || menuKind !== "stack" || backendStale) return;
+    var column = columns.find(function(item) { return Model.columnKey(item) === menuColumnId; });
+    if (column && Model.containsAddress(column, address)) focusColumn({address: address});
+  }
+
+  function closeStackMember(address) {
+    if (!menuOpen || menuKind !== "stack" || backendStale) return;
+    var column = columns.find(function(item) { return Model.columnKey(item) === menuColumnId; });
+    if (column && Model.containsAddress(column, address)) closeColumn({address: address});
+  }
 
   function persistSetting(settingName, value) {
     var entry = {id: moduleName};
@@ -506,6 +554,13 @@ BarWidget {
     if (mode === "underlines" || mode === "tiles") persistSetting("indicationMode", mode);
   }
   function buildMenuItems() {
+    if (menuKind === "stack") {
+      var column = columns.find(function(item) { return Model.columnKey(item) === menuColumnId; });
+      return Model.members(column).map(function(member) {
+        return {label: String(member.title || member.class || member.address), className: member.class || "",
+          action: "member", address: member.address, checked: member.focused === true};
+      });
+    }
     if (menuKind === "regions") return [
       {label: "‹ Back", action: "back"},
       {label: "Left", action: "region", value: "left"},
@@ -523,7 +578,8 @@ BarWidget {
   function chooseMenuItem(index) {
     var item = menuItems[index];
     if (!item) return;
-    if (item.action === "arrow") chooseMode(item.value);
+    if (item.action === "member") focusStackMember(item.address);
+    else if (item.action === "arrow") chooseMode(item.value);
     else if (item.action === "appearance") chooseIndication(item.value);
     else if (item.action === "reset") persistSetting("widthRatio", 0.85);
     else if (item.action === "move") { menuKind = "regions"; menuCursor = 0; }
@@ -755,6 +811,6 @@ BarWidget {
       onClicked: if (!root.operationBusy) root.requestRefresh()
     }
   }
-  StripMenu { controller: root }
+  StripMenu { id: stripMenu; controller: root }
 
 }
