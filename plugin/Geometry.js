@@ -40,6 +40,7 @@ function sum(entries, from, until, excludedId) {
 // area at its center and apply the user's 0..0.85 fraction to allocation.
 function measure(input) {
   input = input || {};
+  if (input.splitCenter) return measureSplitCenter(input);
   var width = positive(input.width);
   var margin = Math.min(positive(input.margin), width / 2);
   var self = String(input.selfId || "");
@@ -99,6 +100,62 @@ function measure(input) {
 
   return {allocation: allocation, x: x, centerX: x + allocation / 2,
     region: region, index: selfIndex, anchored: anchored};
+}
+
+// Current Omarchy centers the middle row as a group. Its two adjacent rows
+// grow outwards, independently of that group. Ignore centerAnchor from older
+// shell.json files: it no longer participates in the host's placement.
+function measureSplitCenter(input) {
+  var width = positive(input.width);
+  var margin = Math.min(positive(input.margin), width / 2);
+  var self = String(input.selfId || "");
+  var names = ["left", "centerBegin", "center", "centerEnd", "right"];
+  var sections = {}, widths = {}, region = "", index = -1;
+  for (var n = 0; n < names.length; n++) {
+    var name = names[n];
+    sections[name] = sectionEntries(input, name);
+    widths[name] = sum(sections[name], 0, sections[name].length, self);
+    var found = indexOfId(sections[name], self);
+    if (found >= 0) { region = name; index = found; }
+  }
+  if (!self || !region || !width)
+    return {allocation: 0, x: 0, centerX: 0, region: region, index: index, anchored: false};
+
+  var leftEnd = margin + widths.left;
+  var rightStart = width - margin - widths.right;
+  var centerStart = Math.round((width - widths.center) / 2);
+  var centerEnd = centerStart + widths.center;
+  var beginStart = centerStart - widths.centerBegin;
+  var endEnd = centerEnd + widths.centerEnd;
+  var hasCenter = widths.centerBegin + widths.center + widths.centerEnd > 0 ||
+    ["centerBegin", "center", "centerEnd"].indexOf(region) >= 0;
+  var before = sum(sections[region], 0, index, self);
+  var allocation = 0, x = 0;
+  if (region === "left") {
+    allocation = Math.max(0, Math.min(hasCenter ? beginStart : rightStart, rightStart) - leftEnd);
+    x = margin + before;
+  } else if (region === "right") {
+    allocation = Math.max(0, rightStart - Math.max(hasCenter ? endEnd : leftEnd, leftEnd));
+    x = rightStart - allocation + before;
+  } else if (region === "centerBegin") {
+    allocation = beginStart + before > rightStart ? 0 : Math.max(0, beginStart - leftEnd);
+    x = beginStart - allocation + before;
+  } else if (region === "centerEnd") {
+    allocation = centerEnd + before < leftEnd ? 0 : Math.max(0, rightStart - endEnd);
+    x = centerEnd + before;
+  } else {
+    allocation = Math.max(0, 2 * Math.min(width / 2 - leftEnd - widths.centerBegin,
+      rightStart - width / 2 - widths.centerEnd) - widths.center);
+    // The host rounds the centered row's origin to a whole logical pixel.
+    // Leave enough room when a sibling has a fractional implicit width.
+    var start = Math.round((width - widths.center - allocation) / 2);
+    var excess = Math.max(leftEnd + widths.centerBegin - start,
+      start + widths.center + allocation + widths.centerEnd - rightStart, 0);
+    if (excess > 0) allocation = Math.max(0, allocation - 2 * Math.ceil(excess));
+    x = Math.round((width - widths.center - allocation) / 2) + before;
+  }
+  return {allocation: allocation, x: x, centerX: x + allocation / 2,
+    region: region, index: index, anchored: false};
 }
 
 // Host introspection lives in HostAdapter.js; the layout policy is pure.

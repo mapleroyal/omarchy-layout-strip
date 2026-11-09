@@ -19,6 +19,16 @@ function configuredEntries(bar, region) {
   return Array.isArray(entries) ? entries : [];
 }
 
+function splitCenter(bar) {
+  var config = bar && (bar.layoutConfig || (bar.shell && bar.shell.barConfig && bar.shell.barConfig.layout));
+  return !!config && ("centerBegin" in config || "centerEnd" in config);
+}
+
+function regionNames(bar) {
+  return splitCenter(bar) ? ["left", "centerBegin", "center", "centerEnd", "right"]
+    : ["left", "center", "right"];
+}
+
 // Omarchy 4.0.3 injects a scoped PluginBarApi rather than the host Bar. Read
 // slot geometry from this surface's visual tree; keep all operations on the
 // scoped API. Never recover the host or another plugin's service through it.
@@ -104,13 +114,13 @@ function entryMatchScore(left, right) {
 
 function geometryInput(root, bar, surface, margin) {
   var input = {width: surface ? surface.width : 0, margin: margin,
-    selfId: root ? root.moduleName : "", centerAnchor: centerAnchor(bar),
-    sections: {left: [], center: [], right: []}};
+    selfId: root ? root.moduleName : "", centerAnchor: centerAnchor(bar), splitCenter: splitCenter(bar),
+    sections: {left: [], centerBegin: [], center: [], centerEnd: [], right: []}};
   var slots = moduleSlots(bar, surface);
   // A missing/starting host must not allocate the entire bar as empty space.
   if (!bar || !slots.length) { input.width = 0; return input; }
   var used = [];
-  var names = ["left", "center", "right"];
+  var names = regionNames(bar);
   for (var r = 0; r < names.length; r++) {
     var region = names[r];
     var entries = configuredEntries(bar, region);
@@ -171,7 +181,7 @@ function persistSetting(bar, moduleName, entry) {
 
 function moveWidget(root, bar, surface, region, beforeId) {
   var slot = findSlot(root, bar, surface);
-  if (!slot || ["left", "center", "right"].indexOf(region) < 0)
+  if (!slot || regionNames(bar).indexOf(region) < 0)
     return {ok: false, error: "This bar cannot move the strip"};
   try {
     if (callable(bar, "dropBarModule"))
@@ -222,5 +232,5 @@ if (typeof module !== "undefined") module.exports = {
   geometryInput: geometryInput, moveChoices: moveChoices, persistSetting: persistSetting,
   moveWidget: moveWidget, registerClickTarget: registerClickTarget,
   unregisterClickTarget: unregisterClickTarget, service: service, appLibrary: appLibrary,
-  hidden: hidden
+  hidden: hidden, regionNames: regionNames
 };

@@ -3,6 +3,14 @@
 local M = {}
 local array = {}
 
+-- Hyprland 0.57 exposes no numeric ID for special/named workspaces.
+-- Keep legacy numbers where present; otherwise use its exact addressable name.
+local function workspace_key(workspace)
+  return workspace and (workspace.id or workspace.addressable_name)
+end
+
+
+
 local function quote(value)
   return '"' .. tostring(value):gsub('[%z\1-\31\\"]', function(character)
     if character == '"' then return '\\"' end
@@ -62,7 +70,8 @@ function M.new(hl, tape, finish_navigation)
   -- Context belongs to the strip/menu at the time of the user's action. A
   -- workspace switch or removed window must not redirect a stale request.
   local function action_workspace(workspace_id, monitor_name)
-    if type(workspace_id) ~= "number" or workspace_id % 1 ~= 0 then
+    if not ((type(workspace_id) == "number" and workspace_id % 1 == 0)
+      or (type(workspace_id) == "string" and workspace_id ~= "")) then
       return nil, "A workspace ID is required"
     end
     if type(monitor_name) ~= "string" or monitor_name == "" then
@@ -70,7 +79,7 @@ function M.new(hl, tape, finish_navigation)
     end
     local workspace, monitor = displayed_workspace(monitor_name)
     if not monitor then return nil, "The strip's monitor is no longer available" end
-    if not workspace or workspace.id ~= workspace_id then
+    if not workspace or workspace_key(workspace) ~= workspace_id then
       return nil, "The strip's workspace is no longer displayed on this monitor"
     end
     if workspace.tiled_layout ~= "scrolling" then
@@ -136,7 +145,7 @@ function M.new(hl, tape, finish_navigation)
       available = tape.available(), columns = columns,
       reorderAvailable = native_v2 and info.reorder == true and type(native.reorder) == "function",
       protectRegionAvailable = native_v2 and info.ownedRegions == true and type(native.protect_bar_region) == "function",
-      workspaceId = workspace and workspace.id or 0,
+      workspaceId = workspace and workspace_key(workspace) or 0,
       workspaceName = workspace and workspace.name or "",
       monitorId = monitor and monitor.id or -1,
       monitorName = monitor and monitor.name or monitor_name or "",
@@ -167,8 +176,8 @@ function M.new(hl, tape, finish_navigation)
         end
       end
     end
-    if not workspace or workspace.tiled_layout ~= "scrolling" then return result end
-    local previous = workspace_columns[workspace.id] or {by_member = {}}
+    if not workspace_key(workspace) or workspace.tiled_layout ~= "scrolling" then return result end
+    local previous = workspace_columns[workspace_key(workspace)] or {by_member = {}}
     local by_index, buckets, floating = {}, {}, {}
     local claimed = {}
     local function member_key(window)
@@ -200,7 +209,7 @@ function M.new(hl, tape, finish_navigation)
         bucket.id, bucket.last_address = selected.id, selected.address
       else
         next_column_id = next_column_id + 1
-        bucket.id = "column:" .. workspace.id .. ":" .. next_column_id
+        bucket.id = "column:" .. workspace_key(workspace) .. ":" .. next_column_id
       end
       claimed[bucket.id] = true
     end
@@ -271,7 +280,7 @@ function M.new(hl, tape, finish_navigation)
     end
     if #floating > 0 then result.reorderAvailable = false end
     local records = {by_member = {}}
-    workspace_columns[workspace.id] = records
+    workspace_columns[workspace_key(workspace)] = records
     for position, bucket in ipairs(buckets) do
       table.sort(bucket.entries, function(a, b)
         return a.data.indexInColumn == b.data.indexInColumn and a.key < b.key
@@ -394,7 +403,8 @@ function M.new(hl, tape, finish_navigation)
       -- Reordering must never activate its source or target. In particular, do
       -- not use jump, swapcol, or finish_navigation's pointer refocus here.
       local info = native.info and native.info()
-      if type(info) ~= "table" or info.ok ~= true or info.protocolVersion ~= 2 or info.reorder ~= true then
+      if type(info) ~= "table" or info.ok ~= true or info.protocolVersion ~= 2 or info.reorder ~= true
+        or (type(workspace_id) == "string" and info.workspaceKeys ~= true) then
         return {ok=false,error="Native protocol v2 reorder is unavailable"}
       end
       local result = native.reorder(source.address, target.address, side, workspace_id, monitor_name)
@@ -430,7 +440,8 @@ function M.new(hl, tape, finish_navigation)
       local native = bridge()
       local info = native and native.info and native.info()
       if type(info) ~= "table" or info.ok ~= true or info.protocolVersion ~= 2 or info.addressedResize ~= true
-        or type(native.resize_column) ~= "function" then
+        or type(native.resize_column) ~= "function"
+        or (type(workspace_id) == "string" and info.workspaceKeys ~= true) then
         return { ok = false, error = "The native tape bridge needs addressed column resizing support" }
       end
       -- Editing a tile must never invoke navigation or its pointer-refocus

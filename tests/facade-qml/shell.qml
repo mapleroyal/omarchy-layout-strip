@@ -118,6 +118,7 @@ ShellRoot {
           }
         }
         Slot {
+          id: badgeSlot
           entry: ({id: "badge"})
           region: "center"
           width: 40
@@ -205,6 +206,21 @@ ShellRoot {
         break;
       case 13:
         allocation(522, "Loader unload updates activeItem and allocation");
+        var next = JSON.parse(JSON.stringify(facade.layoutConfig));
+        next.centerBegin = next.center;
+        next.center = [];
+        next.centerEnd = [];
+        clockSlot.region = "centerBegin";
+        badgeSlot.region = "centerBegin";
+        facade.layoutConfig = next;
+        break;
+      case 14:
+        check(measured.splitCenter, "new host snapshot switches to five sections");
+        allocation(482, "center-begin row grows away from screen center");
+        clockLoader.active = true;
+        break;
+      case 15:
+        allocation(332, "center-begin loader width remains reactive");
         console.log("FACADE_GEOMETRY_RESULTS " + JSON.stringify({checks: checks, failures: failures, measurements: measurements}));
         Qt.quit();
         break;

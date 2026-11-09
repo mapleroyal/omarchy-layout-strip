@@ -21,10 +21,12 @@ run([sys.executable,'tests/test_install.py'])
 with tempfile.TemporaryDirectory(prefix='strip-cpp-tests-') as temporary:
     directory=Path(temporary)
     compiler=os.environ.get('CXX','g++')
-    for name in ('test-reorder','test-bar-press','test-regions'):
+    for name in ('test-reorder','test-bar-press','test-regions','test-workspace-key'):
         extra=[]
         if name=='test-bar-press':
             extra=shlex.split(subprocess.check_output(['pkg-config','--cflags','--libs','hyprutils','wayland-server'],text=True))
+        if name=='test-workspace-key':
+            extra=shlex.split(subprocess.check_output(['pkg-config','--cflags','--libs','lua'],text=True))
         executable=directory/name
         run([compiler,'-std=c++26','-O2','-Wall','-Wextra','-I',ROOT/'native',ROOT/'tests/native'/f'{name}.cpp','-o',executable,*extra])
         run([executable])

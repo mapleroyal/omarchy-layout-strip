@@ -33,6 +33,8 @@ function number(value) {
   return String(value);
 }
 function workspace(value) {
+  if (typeof value === "string" && /^(special|name):[^\x00-\x1f\x7f]+$/.test(value) && value.length <= 512)
+    return luaString(value);
   if (!Number.isSafeInteger(value)) throw new Error("A workspace ID is required");
   return String(value);
 }
@@ -67,7 +69,8 @@ function parseAction(args) {
       throw new Error("Invalid action argument");
     fields[key] = args[i + 1];
   }
-  var id = Number(fields["--workspace"]);
+  var rawId = fields["--workspace"];
+  var id = typeof rawId === "string" && /^(special|name):/.test(rawId) ? rawId : Number(rawId);
   workspace(id);
   monitor(fields["--monitor"]);
   address(args[2]);

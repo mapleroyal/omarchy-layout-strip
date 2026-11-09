@@ -47,3 +47,17 @@ widget.moduleName="strip'$(false)";
 assert.equal(Host.moveWidget(widget,bar,surface,'right','').ok,true);
 assert.equal(commands[2],"omarchy bar move 'strip'\\''$(false)' --section 'right' --index 0");
 console.log('Scoped host: scene geometry, delayed loading, monitor isolation, hidden state and quoted placement passed');
+
+// New host snapshots always carry both adjacent-center keys. A stale anchor
+// from old shell.json must not override the current row placement.
+widget.moduleName='strip';
+entries.centerBegin=[{id:'keyboard'}]; entries.centerEnd=[];
+const keyboard={entry:entries.centerBegin[0],moduleName:'keyboard',region:'centerBegin',width:40,activeItem:{surface,visible:true}};
+surface.contentItem.children.push(keyboard);
+bar.shell.barConfig.centerAnchor='absent';
+assert.equal(Host.geometryInput(widget,bar,surface,8).splitCenter,true);
+assert.equal(measure().allocation,402);
+assert.deepEqual(Host.regionNames(bar),['left','centerBegin','center','centerEnd','right']);
+assert.equal(Host.moveWidget(widget,bar,surface,'centerBegin','keyboard').ok,true);
+assert.equal(commands.at(-1),"omarchy bar move 'strip' --section 'centerBegin' --before 'keyboard'");
+console.log('Scoped host: five-section geometry and placement passed');

@@ -88,6 +88,62 @@ for (let caseNumber = 0; caseNumber < 250; caseNumber++) {
   }
 }
 
+// Reproduce the new host's five independent rows, including pixel-rounded
+// center placement. Test every possible strip position, including empty rows.
+function placeSplitRows(data, selfWidth) {
+  const groups = {}, names = ['left', 'centerBegin', 'center', 'centerEnd', 'right'];
+  const widths = Object.fromEntries(names.map(name => [name,
+    data.sections[name].map(e => e.id === 'strip' ? selfWidth : e.width)]));
+  const totals = Object.fromEntries(names.map(name => [name, widths[name].reduce((a,b)=>a+b,0)]));
+  const middle = Math.round((data.width - totals.center) / 2);
+  const starts = {left:data.margin, centerBegin:middle - totals.centerBegin, center:middle,
+    centerEnd:middle + totals.center, right:data.width-data.margin-totals.right};
+  for (const name of names) {
+    let x = starts[name];
+    const positions = widths[name].map((w,i) => {
+      const result = {id:data.sections[name][i].id,x,width:w}; x += w; return result;
+    });
+    groups[name] = {start:starts[name],end:x,total:totals[name],positions};
+  }
+  return groups;
+}
+for (let caseNumber=0;caseNumber<200;caseNumber++) {
+  const names=['left','centerBegin','center','centerEnd','right'];
+  const data={width:1000+random(1800),margin:8,selfId:'strip',splitCenter:true,centerAnchor:'ignored',sections:{}};
+  for (const name of names) data.sections[name]=Array.from({length:random(4)},(_,i)=>({id:name+i,width:random(100)/2}));
+  for (const region of names) for (let i=0;i<=data.sections[region].length;i++) {
+    const candidate=structuredClone(data);
+    candidate.sections[region].splice(i,0,{id:'strip',width:99999});
+    const result=Geometry.measure(candidate), groups=placeSplitRows(candidate,result.allocation);
+    const actual=groups[region].positions.find(e=>e.id==='strip');
+    equal(result.x,actual.x);
+    const repeated=structuredClone(candidate); repeated.sections[region][i].width=result.allocation;
+    equal(Geometry.measure(repeated),result);
+    if (!result.allocation) continue;
+    check(groups.left.end<=groups.right.start+.0001,'outer rows do not overlap');
+    check(groups.left.end<=groups.centerBegin.start+.0001,'left clears center begin');
+    check(groups.centerEnd.end<=groups.right.start+.0001,'center end clears right');
+    check(actual.x>=data.margin-.0001 && actual.x+result.allocation<=data.width-data.margin+.0001,'strip stays on screen');
+  }
+}
+
+// Crowded layouts may already have overlapping stock rows. Never allocate
+// a positive strip rectangle over any of those widgets, whichever side grew.
+for (let caseNumber=0;caseNumber<500;caseNumber++) {
+  const names=['left','centerBegin','center','centerEnd','right'];
+  const data={width:100+random(1000),margin:8,selfId:'strip',splitCenter:true,sections:{}};
+  for (const name of names) data.sections[name]=Array.from({length:random(3)},(_,i)=>({id:name+i,width:random(450)}));
+  const region=names[random(5)],index=random(data.sections[region].length+1);
+  data.sections[region].splice(index,0,{id:'strip',width:99999});
+  const result=Geometry.measure(data),groups=placeSplitRows(data,result.allocation);
+  if (!result.allocation) continue;
+  const own=groups[region].positions.find(e=>e.id==='strip');
+  for (const name of names) for (const other of groups[name].positions) {
+    if (other.id==='strip' || !other.width) continue;
+    check(own.x+own.width<=other.x+.0001 || other.x+other.width<=own.x+.0001,'crowded layout never allocates over another widget');
+  }
+}
+
 // Host adapter regression: identical module IDs on another monitor must not
 // influence measurement; opacity-hidden widgets still reserve their full slot.
 const screenA = {width: 1440};

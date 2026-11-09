@@ -41,7 +41,8 @@ position—which columns are visible—not a thumbnail or recording device.
 - Right-click blank space or an arrow for settings, width reset and placement.
   Drag either narrow edge to resize around the strip's fixed center.
 - Underlines and Tiles show half/two-thirds/full column widths. Colors, corners
-  and icons follow Omarchy. Horizontal bars are supported in all three sections;
+  and icons follow Omarchy. Horizontal bars are supported in all available sections,
+  including Before center and After center on the five-section shell;
   stacked columns retain one tile with a member chooser. This works on portrait
   and landscape monitors with a horizontal bar.
 
@@ -86,7 +87,11 @@ Required: Omarchy's Quickshell shell, Lua-enabled Hyprland scrolling layout,
 Python 3 for installation/tools, and the matching Hyprland/Lua development headers,
 GCC-compatible C++26 compiler and pkg-config for the native bridge.
 
-Tested against Omarchy 4.0.2-1 and 4.0.3-1, Quickshell 0.3.1, Qt 6.11.2 and Hyprland 0.56.2.
+The current native source targets Hyprland 0.57.1. This port is tested against
+Omarchy edge `4.0.0.r7634.gcbd0029-1`, Quickshell `0.3.2.r7.g2b4501a-7` and
+Qt 6.12. The Lua and widget adapters retain the older numeric workspace and
+three-section bar interfaces; older native headers require the matching earlier
+source revision rather than this native build.
 Native binaries are tied to the exact compositor commit and full ABI. Update and
 restart Hyprland before rebuilding against newly installed headers.
 After a Hyprland or dependency package update, run `hypr-tape-rebuild` if

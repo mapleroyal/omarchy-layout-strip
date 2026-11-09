@@ -44,6 +44,26 @@ class CliTests(unittest.TestCase):
         self.assertIn('omarchy_tape_bar.close(', code)
         self.assertNotIn('.focus(', code)
 
+    def test_named_workspace_keys_are_lua_strings_never_source(self):
+        for key in ('special:scratchpad', 'special:qconsole', 'name:Research',
+                    'name:foo\"; os.execute(\"false\"); -- 雪'):
+            for command in ('focus', 'close', 'cycle_width', 'cycle_window', 'reorder'):
+                arguments = [command, '0x12', '--workspace', key, '--monitor', 'eDP-1']
+                if command == 'reorder':
+                    arguments += ['--target', '0x13', '--side', 'after']
+                _, _, run = self.invoke(arguments)
+                code = run.call_args.args[0][2]
+                self.assertIn(cli.lua_string(key), code)
+                self.assertNotIn('os.execute', code)
+                self.assertNotIn('shell', run.call_args.kwargs)
+
+    def test_empty_or_control_workspace_key_never_reaches_compositor(self):
+        for key in ('', 'special:bad\nname', 'name:bad\0name'):
+            with mock.patch.object(cli.subprocess, 'run') as run:
+                with contextlib.redirect_stderr(io.StringIO()), self.assertRaises(SystemExit):
+                    cli.main(['close', '0x12', '--workspace', key, '--monitor', 'main'])
+                run.assert_not_called()
+
     def test_width_cycle_is_addressed_and_compositor_owned(self):
         _, _, run = self.invoke(['cycle_width', '0xAB', '--workspace', '4', '--monitor', 'eDP-1'])
         code = run.call_args.args[0][2]

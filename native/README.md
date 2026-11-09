@@ -1,5 +1,17 @@
 # Native tape bridge
 
+This source targets Hyprland 0.57.1. Workspace/layout and window state use the
+current public accessors. Addressed operations accept a numbered workspace ID
+or its exact `addressable_name` string; the latter preserves special workspace
+identity now that those workspaces expose `id = nil` to Lua. `info()` advertises
+`workspaceKeys=true`. No names are converted into invented numeric IDs, and
+the workspace must still be the displayed workspace of the supplied monitor.
+
+The November compatibility build and standalone identity/reorder/region/lease
+checks passed against the target headers. These checks do not establish live
+compositor or physical input behavior; rebuild and verify against the running
+compositor before selecting a new immutable build in `active.lua`.
+
 This local Hyprland plugin exposes the following functions to Lua:
 
 - `hl.plugin.tape.pan(delta)` moves the native tape by `delta` logical pixels.

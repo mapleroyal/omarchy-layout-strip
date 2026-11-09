@@ -1,10 +1,10 @@
 // A narrow Lua bridge to Hyprland's public scrolling-layout API.
 // No function hooks, private members, focus changes, or independent animations.
 #include <hyprland/src/plugins/PluginAPI.hpp>
-#include <hyprland/src/desktop/Workspace.hpp>
+#include <hyprland/src/workspace/HLWorkspace.hpp>
 #include <hyprland/src/desktop/state/FocusState.hpp>
 #include <hyprland/src/desktop/state/ViewState.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/desktop/view/LayerSurface.hpp>
 #include <hyprland/src/Compositor.hpp>
 #include <hyprland/src/config/ConfigValue.hpp>
@@ -34,6 +34,7 @@
 #include "Reorder.hpp"
 #include "BarPressGuard.hpp"
 #include "BarRegionRegistry.hpp"
+#include "WorkspaceKey.hpp"
 
 static HANDLE              g_handle = nullptr;
 static CHyprSignalListener g_beforeDrop;
@@ -96,10 +97,10 @@ struct SDragOrigin {
 static std::optional<SDragOrigin>          g_dragOrigin;
 
 static Layout::Tiled::CScrollingAlgorithm* tapeForWorkspace(PHLWORKSPACE workspace) {
-    if (!valid(workspace) || !workspace->m_space)
+    if (!valid(workspace) || !workspace->space())
         return nullptr;
 
-    const auto algorithm = workspace->m_space->algorithm();
+    const auto algorithm = workspace->space()->algorithm();
     if (!algorithm || !algorithm->tiledAlgo())
         return nullptr;
 
@@ -112,7 +113,7 @@ static bool cameraFullscreenSafe(PHLWORKSPACE workspace) {
     // Check every FS member, including offscreen ones: hasFullscreen() defaults
     // to covering windows and would change its answer halfway through a swipe.
     for (const auto& window : Desktop::viewState()->windows()) {
-        if (!window || !window->m_isMapped || window->m_workspace != workspace ||
+        if (!window || !window->mapped() || window->m_workspace != workspace ||
             Fullscreen::controller()->getFullscreenModes(window).internal == Fullscreen::FSMODE_NONE)
             continue;
         if (Fullscreen::controller()->getFullscreenHandlerName(window) != Fullscreen::FULLSCREEN_HANDLER_SCROLLING)
@@ -131,11 +132,11 @@ static Layout::Tiled::CScrollingAlgorithm* currentTape() {
         return nullptr;
 
     const auto workspace = monitor->m_activeSpecialWorkspace ? monitor->m_activeSpecialWorkspace : monitor->m_activeWorkspace;
-    if (!valid(workspace) || !workspace->m_space)
+    if (!valid(workspace) || !workspace->space())
         return nullptr;
 
     const auto window = focus->window();
-    if (window && (!window->m_isMapped || window->m_isFloating || window->m_workspace != workspace))
+    if (window && (!window->mapped() || window->isFloating() || window->m_workspace != workspace))
         return nullptr;
 
     if (!cameraFullscreenSafe(workspace))
@@ -190,7 +191,7 @@ static void guardBarPress(IPointer::SButtonEvent event) {
         return;
     const auto cursor = g_pInputManager->getMouseCoordsInternal();
     for (const auto& layer : Desktop::viewState()->layers()) {
-        if (!layer->m_mapped || layer->resource() != pointerSurface ||
+        if (!layer->mapped() || layer->resource() != pointerSurface ||
             (layer->m_namespace != "omarchy-bar" && layer->m_namespace != "omarchy-keyboard-panel" &&
              layer->m_namespace != "omarchy-keyboard-panel-dismiss"))
             continue;
@@ -204,7 +205,7 @@ static void guardBarPress(IPointer::SButtonEvent event) {
         // offscreen logical box may extend across monitors, so protect its own
         // workspace, after authenticating the clicked strip above.
         const auto focused = Desktop::focusState()->window();
-        if (!focused || !focused->m_isMapped || focused->m_isFloating)
+        if (!focused || !focused->mapped() || focused->isFloating())
             return;
         const auto workspace = focused->m_workspace;
         const auto focusedMonitor = valid(workspace) ? workspace->m_monitor.lock() : nullptr;
@@ -242,7 +243,7 @@ static void rememberLeadingDrop(IPointer::SButtonEvent event) {
         g_dragOrigin.reset();
         const auto cursor = g_pInputManager->getMouseCoordsInternal();
         const auto window = Desktop::viewState()->hitTest().windowAt(cursor, Desktop::View::RESERVED_EXTENTS | Desktop::View::INPUT_EXTENTS | Desktop::View::ALLOW_FLOATING);
-        if (!window || window->m_isFloating || !window->m_isMapped)
+        if (!window || window->isFloating() || !window->mapped())
             return;
 
         const auto target    = window->layoutTarget();
@@ -272,7 +273,7 @@ static void rememberLeadingDrop(IPointer::SButtonEvent event) {
 
     const auto target = drag->target();
     const auto window = target ? target->window() : nullptr;
-    if (!window || target != origin->target || !window->m_isMapped || !target->floating() || Desktop::focusState()->window() != window)
+    if (!window || target != origin->target || !window->mapped() || !target->floating() || Desktop::focusState()->window() != window)
         return;
 
     const auto workspace = target->workspace();
@@ -303,7 +304,7 @@ static void rememberLeadingDrop(IPointer::SButtonEvent event) {
 }
 
 static void finishLeadingDrop(PHLWINDOW window) {
-    if (!g_pendingLeadingDrop || !window || window->m_isFloating)
+    if (!g_pendingLeadingDrop || !window || window->isFloating())
         return;
 
     const auto pending = *g_pendingLeadingDrop;
@@ -367,14 +368,18 @@ static PHLMONITOR monitorNamed(std::string_view name) {
     return nullptr;
 }
 
+static bool workspaceMatches(lua_State* lua, int index, const PHLWORKSPACE& workspace) {
+    return valid(workspace) && TapeWorkspaceKey::matches(lua, index, workspace->numberedID(), workspace->addressableName());
+}
+
 static Layout::Tiled::CScrollingAlgorithm* addressedTape(lua_State* lua, int workspaceIndex, int monitorIndex) {
-    if (!lua_isinteger(lua, workspaceIndex) || lua_type(lua, monitorIndex) != LUA_TSTRING)
+    if (!TapeWorkspaceKey::valid(lua, workspaceIndex) || lua_type(lua, monitorIndex) != LUA_TSTRING)
         return nullptr;
     const auto monitor = monitorNamed(stringArgument(lua, monitorIndex));
     if (!monitor)
         return nullptr;
     const auto workspace = monitor->m_activeSpecialWorkspace ? monitor->m_activeSpecialWorkspace : monitor->m_activeWorkspace;
-    if (!valid(workspace) || workspace->m_id != lua_tointeger(lua, workspaceIndex) || !cameraFullscreenSafe(workspace))
+    if (!workspaceMatches(lua, workspaceIndex, workspace) || !cameraFullscreenSafe(workspace))
         return nullptr;
     return tapeForWorkspace(workspace);
 }
@@ -430,17 +435,17 @@ static TapeReorder::Box reorderBox(const CBox& box) {
 static int resizeColumn(lua_State* lua) {
     finishReleasedBarPress();
     if (lua_gettop(lua) != 4 || lua_type(lua, 1) != LUA_TSTRING || lua_type(lua, 2) != LUA_TNUMBER ||
-        !lua_isinteger(lua, 3) || lua_type(lua, 4) != LUA_TSTRING)
-        return result(lua, "resize_column expects address, width fraction, workspace integer, monitor name");
+        !TapeWorkspaceKey::valid(lua, 3) || lua_type(lua, 4) != LUA_TSTRING)
+        return result(lua, "resize_column expects address, width fraction, workspace ID or addressable name, monitor name");
     const double requestedWidth = lua_tonumber(lua, 2);
     if (!std::isfinite(requestedWidth) || requestedWidth < 0.05 || requestedWidth > 1)
         return result(lua, "column width must be between 0.05 and 1");
     const auto window = windowAtAddress(stringArgument(lua, 1));
-    if (!window || !window->m_isMapped || window->isHidden() || window->m_isFloating || !valid(window->m_workspace))
+    if (!window || !window->mapped() || window->isHidden() || window->isFloating() || !valid(window->m_workspace))
         return result(lua, "the window is no longer a visible tiled column");
     const auto workspace = window->m_workspace;
     const auto monitor = workspace->m_monitor.lock();
-    if (workspace->m_id != lua_tointeger(lua, 3) || !monitor || monitor->m_name != stringArgument(lua, 4) ||
+    if (!workspaceMatches(lua, 3, workspace) || !monitor || monitor->m_name != stringArgument(lua, 4) ||
         (monitor->m_activeSpecialWorkspace ? monitor->m_activeSpecialWorkspace : monitor->m_activeWorkspace) != workspace)
         return result(lua, "the displayed workspace or monitor changed");
     if (Fullscreen::controller()->hasFullscreen(workspace))
@@ -469,7 +474,7 @@ static int resizeColumn(lua_State* lua) {
         static const auto fullscreenOnOne = CConfigValue<Config::INTEGER>("scrolling:fullscreen_on_one_column");
         std::optional<size_t> focusedIndex;
         const auto focused = Desktop::focusState()->window();
-        const auto focusedData = focused && focused->m_workspace == workspace && !focused->m_isFloating
+        const auto focusedData = focused && focused->m_workspace == workspace && !focused->isFloating()
             ? tape->dataFor(focused->layoutTarget()) : nullptr;
         const auto focusedColumn = focusedData ? focusedData->column.lock() : nullptr;
         const auto focusedPosition = focusedColumn ? data->idx(focusedColumn) : -1;
@@ -513,8 +518,8 @@ static int resizeColumn(lua_State* lua) {
 static int reorder(lua_State* lua) {
     finishReleasedBarPress();
     if (lua_gettop(lua) != 5 || lua_type(lua, 1) != LUA_TSTRING || lua_type(lua, 2) != LUA_TSTRING ||
-        lua_type(lua, 3) != LUA_TSTRING || !lua_isinteger(lua, 4) || lua_type(lua, 5) != LUA_TSTRING)
-        return result(lua, "reorder expects source address, target address, before/after, workspace integer, monitor name");
+        lua_type(lua, 3) != LUA_TSTRING || !TapeWorkspaceKey::valid(lua, 4) || lua_type(lua, 5) != LUA_TSTRING)
+        return result(lua, "reorder expects source address, target address, before/after, workspace ID or addressable name, monitor name");
 
     const auto side = stringArgument(lua, 3);
     if (side != "before" && side != "after")
@@ -523,14 +528,14 @@ static int reorder(lua_State* lua) {
     const auto sourceWindow = windowAtAddress(stringArgument(lua, 1));
     const auto targetWindow = windowAtAddress(stringArgument(lua, 2));
     const auto usableWindow = [](const PHLWINDOW& window) {
-        return window && window->m_isMapped && !window->isHidden() && !window->m_isFloating && valid(window->m_workspace);
+        return window && window->mapped() && !window->isHidden() && !window->isFloating() && valid(window->m_workspace);
     };
     if (!usableWindow(sourceWindow) || !usableWindow(targetWindow))
         return result(lua, "the source or target is no longer a visible tiled window");
 
     const auto workspace = sourceWindow->m_workspace;
     const auto monitor = workspace->m_monitor.lock();
-    if (targetWindow->m_workspace != workspace || workspace->m_id != lua_tointeger(lua, 4) || !monitor ||
+    if (targetWindow->m_workspace != workspace || !workspaceMatches(lua, 4, workspace) || !monitor ||
         monitor->m_name != stringArgument(lua, 5) ||
         (monitor->m_activeSpecialWorkspace ? monitor->m_activeSpecialWorkspace : monitor->m_activeWorkspace) != workspace)
         return result(lua, "the displayed workspace or monitor changed");
@@ -567,7 +572,7 @@ static int reorder(lua_State* lua) {
     const double offsetBefore = data->controller->getOffset();
     std::optional<size_t> focusedIndex;
     const auto focused = Desktop::focusState()->window();
-    if (focused && focused->m_workspace == workspace && !focused->m_isFloating) {
+    if (focused && focused->m_workspace == workspace && !focused->isFloating()) {
         const auto focusedData = tape->dataFor(focused->layoutTarget());
         const auto focusedColumn = focusedData ? focusedData->column.lock() : nullptr;
         const auto index = focusedColumn ? data->idx(focusedColumn) : -1;
@@ -728,8 +733,8 @@ static int panImpl(lua_State* lua, bool direct) {
     finishReleasedBarPress();
     const int args = lua_gettop(lua);
     if ((args != 1 && args != 2 && args != 4) || lua_type(lua, 1) != LUA_TNUMBER ||
-        (args >= 2 && lua_type(lua, 2) != LUA_TBOOLEAN) || (args == 4 && (!lua_isinteger(lua, 3) || lua_type(lua, 4) != LUA_TSTRING)))
-        return result(lua, "pan expects delta, optional exact boolean, and optional workspace integer + monitor name");
+        (args >= 2 && lua_type(lua, 2) != LUA_TBOOLEAN) || (args == 4 && (!TapeWorkspaceKey::valid(lua, 3) || lua_type(lua, 4) != LUA_TSTRING)))
+        return result(lua, "pan expects delta, optional exact boolean, and optional workspace ID or addressable name + monitor name");
 
     const double delta = lua_tonumber(lua, 1);
     if (!std::isfinite(delta) || std::abs(delta) > std::numeric_limits<float>::max())
@@ -796,8 +801,8 @@ static int panDirect(lua_State* lua) {
 static int snapshot(lua_State* lua) {
     finishReleasedBarPress();
     const int args = lua_gettop(lua);
-    if (args != 0 && (args != 2 || !lua_isinteger(lua, 1) || lua_type(lua, 2) != LUA_TSTRING))
-        return result(lua, "snapshot expects no arguments or a workspace integer and monitor name");
+    if (args != 0 && (args != 2 || !TapeWorkspaceKey::valid(lua, 1) || lua_type(lua, 2) != LUA_TSTRING))
+        return result(lua, "snapshot expects no arguments or a workspace ID or addressable name and monitor name");
 
     const auto tape = args == 2 ? addressedTape(lua, 1, 2) : currentTape();
     if (!tape)
@@ -825,7 +830,7 @@ static int snapshot(lua_State* lua) {
             for (const auto& targetData : sampleColumn->targetDatas) {
                 const auto target = targetData->target.lock();
                 const auto window = target ? target->window() : nullptr;
-                if (!window || !window->m_isMapped || window->isHidden())
+                if (!window || !window->mapped() || window->isHidden())
                     continue;
                 const auto goal = window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_GOAL);
                 const auto current = window->geometricBox(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
@@ -878,6 +883,7 @@ static int info(lua_State* lua) {
     lua_setfield(lua, -2, "git_hash");
     numberField(lua, "protocolVersion", 2);
     boolField(lua, "addressedCamera", true);
+    boolField(lua, "workspaceKeys", true);
     boolField(lua, "directPan", true);
     boolField(lua, "layoutFullscreen", true);
     boolField(lua, "ownedRegions", true);

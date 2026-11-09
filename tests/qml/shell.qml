@@ -930,6 +930,18 @@ ShellRoot {
           events.mouseRelease(priorTile,point.x,point.y,Qt.LeftButton,Qt.NoModifier,1);
           check(requestedCommands.length===1 && widget.lastCommand[1]==="reorder" && widget.lastCommand[2]==="0xa",
             "Stack drag preserves the original pressed member across pre-drag focus changes");
+          widget.applySnapshot(snapshot(3,0,"special:qconsole"));
+          break;
+        case 54:
+          check(widget.lastWorkspace==="special:qconsole", "Special workspace retains its addressable identity");
+          requestedCommands=[];
+          priorTile=tileFor("0x1");
+          events.mouseWheel(priorTile,Style.space(8),priorTile.height/2,Qt.NoButton,Qt.NoModifier,0,-120,1);
+          check(widget.wheelAnchorWorkspace==="special:qconsole", "Stationary wheel target retains special workspace identity");
+          check(requestedCommands.length===1 && widget.lastCommand[widget.lastCommand.indexOf("--workspace")+1]==="special:qconsole", "Special workspace wheel addresses the intended workspace");
+          widget.beginDrag(widget.columns[0],Qt.point(widget.stripWidth-2,widget.barSize/2));
+          check(widget.dragWorkspace==="special:qconsole", "Drag retains special workspace identity");
+          widget.cancelDrag();
           finish();
           break;
         }

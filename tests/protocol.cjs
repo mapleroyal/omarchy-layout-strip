@@ -61,3 +61,15 @@ const guarded = spawnSync('lua',['-e',`omarchy_tape_bar={protocol_version=1,focu
 assert.equal(guarded.status,0,guarded.stderr);
 assert.equal(JSON.parse(guarded.stdout).ok,false);
 console.log('Protocol encoding, injection boundaries, validation and version guard passed');
+
+for (const id of ['special:qconsole','name:Research','name:Planning 雪','special:notes 雪','special:a"; error("injected"); --']) {
+  const action=P.parseAction(['ignored','focus','0x1','--workspace',id,'--monitor','DP-2']);
+  assert.equal(action.workspaceId,id);
+  const invocation='omarchy_tape_bar={protocol_version=2,focus=function(address,workspace,monitor) io.write(workspace); return "" end}; '+action.command[2];
+  const decoded=spawnSync('lua',['-e',invocation],{encoding:'utf8'});
+  assert.equal(decoded.status,0,decoded.stderr);
+  assert.equal(decoded.stdout,id);
+}
+for (const id of ['special:', 'name:', 'name:bad\nline', 'special:bad\0name', 'special:'+ 'x'.repeat(505),'named:invalid'])
+  assert.throws(()=>P.parseAction(['ignored','focus','0x1','--workspace',id,'--monitor','DP-2']));
+console.log('Special and named workspace identities round-trip safely through Lua');

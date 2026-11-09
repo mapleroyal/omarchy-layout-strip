@@ -14,7 +14,7 @@ BarWidget {
   property bool backendEnabled: true
   property string lastSnapshot: ""
   property string lastFocused: ""
-  property int lastWorkspace: 0
+  property var lastWorkspace: 0
   property bool menuOpen: false
   property var menuAnchor: null
   property int menuCursor: 0
@@ -52,7 +52,7 @@ BarWidget {
   readonly property var menuPanel: stripMenu
   property bool dragging: false
   property var dragColumn: null
-  property int dragWorkspace: 0
+  property var dragWorkspace: 0
   property string dragMonitor: ""
   property real dragX: 0
   property real dragY: 0
@@ -68,7 +68,7 @@ BarWidget {
   property bool wheelCyclePixels: false
   property double wheelCycleTime: 0
   property string wheelAnchorAddress: ""
-  property int wheelAnchorWorkspace: 0
+  property var wheelAnchorWorkspace: 0
   property point wheelAnchorPoint: Qt.point(0, 0)
 
   readonly property var columns: snapshot.columns || []
@@ -561,11 +561,12 @@ BarWidget {
           action: "member", address: member.address, checked: member.focused === true};
       });
     }
-    if (menuKind === "regions") return [
-      {label: "‹ Back", action: "back"},
-      {label: "Left", action: "region", value: "left"},
-      {label: "Center", action: "region", value: "center"},
-      {label: "Right", action: "region", value: "right"}];
+    if (menuKind === "regions") {
+      var labels = {left: "Left", centerBegin: "Before center", center: "Center", centerEnd: "After center", right: "Right"};
+      return [{label: "‹ Back", action: "back"}].concat(HostAdapter.regionNames(bar).map(function(region) {
+        return {label: labels[region], action: "region", value: region};
+      }));
+    }
     if (menuKind === "positions") return placementChoices;
     return [
       {label: "Scroll on hover", action: "arrow", value: "hover", header: "Arrow scrolling", checked: arrowMode === "hover"},

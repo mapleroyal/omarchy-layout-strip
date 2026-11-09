@@ -2,6 +2,14 @@
 -- refresh and per-workspace lifecycle repairs; it installs no keybindings.
 local M = {}
 local active
+
+-- Hyprland 0.57 exposes no numeric ID for special/named workspaces.
+-- Keep legacy numbers where present; otherwise use its exact addressable name.
+local function workspace_key(workspace)
+  return workspace and (workspace.id or workspace.addressable_name)
+end
+
+
 function M.new(hl, tape, Bar)
   if active then active.dispose() end
   local self = {}
@@ -69,9 +77,10 @@ function M.new(hl, tape, Bar)
   self.close_listener = hl.on("window.close",function(window)
     if disposed or deferred then return end
     local workspace = window and window.workspace
-    if not workspace then return end
-    local token = tape.prepare_close(window,close_tokens[workspace.id])
-    if token then close_tokens[workspace.id]=token; repair_timer:set_timeout(1) end
+    local key = workspace_key(workspace)
+    if not key then return end
+    local token = tape.prepare_close(window,close_tokens[key])
+    if token then close_tokens[key]=token; repair_timer:set_timeout(1) end
   end)
   self.fullscreen_listener = hl.on("window.fullscreen",function(window)
     if disposed then return end

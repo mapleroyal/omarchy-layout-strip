@@ -2,6 +2,12 @@
 -- The small native bridge exposes the scrolling layout's own camera. It does
 -- not implement another layout or animation system.
 local M = {}
+-- Hyprland 0.57 exposes no numeric ID for special/named workspaces.
+-- Keep legacy numbers where present; otherwise use its exact addressable name.
+local function workspace_key(workspace)
+  return workspace and (workspace.id or workspace.addressable_name)
+end
+
 local G = {}
 M.geometry = G
 
@@ -165,14 +171,14 @@ function M.new(hl)
   local function generation(workspace_id) return generations[workspace_id] or 0 end
   function self.invalidate_workspace(workspace_id)
     local workspace = not workspace_id and current_workspace() or nil
-    workspace_id = workspace_id or (workspace and workspace.id)
+    workspace_id = workspace_id or (workspace and workspace_key(workspace))
     if workspace_id then generations[workspace_id] = generation(workspace_id) + 1 end
     if gesture and gesture.initial and gesture.initial.workspace_id == workspace_id then gesture = nil end
   end
   local function displayed_workspace(workspace_id, monitor_name)
     for _, monitor in ipairs(hl.get_monitors()) do
       local workspace = monitor.active_special_workspace or monitor.active_workspace
-      if workspace and workspace.id == workspace_id and monitor.name == monitor_name then return workspace end
+      if workspace and workspace_key(workspace) == workspace_id and monitor.name == monitor_name then return workspace end
     end
   end
 
@@ -192,20 +198,21 @@ function M.new(hl)
   function self.snapshot(workspace_id, monitor_name)
     local addressed = workspace_id ~= nil
     local workspace = addressed and displayed_workspace(workspace_id, monitor_name) or (not addressed and current_workspace())
-    if not workspace or workspace.tiled_layout ~= "scrolling" then return nil end
+    if not workspace_key(workspace) or workspace.tiled_layout ~= "scrolling" then return nil end
     local native = bridge()
     if not self.available() then return nil end
     if addressed then
       local ok, info = pcall(function() return native.info and native.info() end)
-      if not ok or type(info) ~= "table" or info.protocolVersion ~= 2 or info.addressedCamera ~= true then return nil end
+      if not ok or type(info) ~= "table" or info.protocolVersion ~= 2 or info.addressedCamera ~= true
+        or (type(workspace_id) == "string" and info.workspaceKeys ~= true) then return nil end
     end
-    local camera = addressed and native.snapshot(workspace.id, monitor_name) or native.snapshot()
+    local camera = addressed and native.snapshot(workspace_key(workspace), monitor_name) or native.snapshot()
     if not camera or camera.ok == false or not camera.width or camera.width <= 0 or camera.offset == nil then return nil end
     local columns, indexes = {}, {}
     local active = hl.get_active_window()
     -- The native bridge validates the fullscreen handler. Older bridges cannot
     -- safely pan an active fullscreen window; keep their original fallback.
-    if active and active.workspace and active.workspace.id == workspace.id and active.fullscreen ~= 0
+    if active and active.workspace and workspace_key(active.workspace) == workspace_key(workspace) and active.fullscreen ~= 0
       and camera.layoutFullscreen ~= true then return nil end
     for _, window in ipairs(hl.get_workspace_windows(workspace)) do
       local info = window.layout
@@ -224,7 +231,7 @@ function M.new(hl)
     for i, column in ipairs(columns) do widths[i] = column.width end
     local s = G.build(widths, camera.width, camera.offset, hl.get_config("scrolling.fullscreen_on_one_column"))
     s.workspace, s.active = workspace, active
-    s.workspace_id = workspace.id
+    s.workspace_id = workspace_key(workspace)
     s.monitor = workspace.monitor
     s.monitor_id = s.monitor and s.monitor.id
     s.monitor_name = s.monitor and s.monitor.name
@@ -336,9 +343,9 @@ function M.new(hl)
     -- Moving over a bar can change the active monitor while keyboard focus
     -- remains on the previous output. Only use the ordinary path when its
     -- camera is actually available; otherwise use the addressed view below.
-    if current and current.id == workspace.id and self.snapshot() then return self.browse(direction, false) end
-    self.invalidate_workspace(workspace.id)
-    local before = self.snapshot(workspace.id, monitor_name)
+    if current and workspace_key(current) == workspace_key(workspace) and self.snapshot() then return self.browse(direction, false) end
+    self.invalidate_workspace(workspace_key(workspace))
+    local before = self.snapshot(workspace_key(workspace), monitor_name)
     if not before then
       local result = hl.dispatch(hl.dsp.focus({ monitor = monitor_name }))
       if failed(result) then return result end
@@ -350,7 +357,7 @@ function M.new(hl)
     local result = hl.dispatch(hl.dsp.focus({ window = selected }))
     if failed(result) then return result end
     local after = self.snapshot()
-    if not after or after.workspace_id ~= workspace.id then
+    if not after or after.workspace_id ~= workspace_key(workspace) then
       return { ok = true, changed = true }
     end
     result = pan_to(after, offset, selected)
@@ -390,18 +397,18 @@ function M.new(hl)
     address = address:lower()
     local current = hl.get_active_special_workspace() or hl.get_active_workspace()
     local workspace = current
-    if monitor_name or (workspace_id and (not current or current.id ~= workspace_id)) then
+    if monitor_name or (workspace_id and (not current or workspace_key(current) ~= workspace_id)) then
       workspace = nil
       for _, monitor in ipairs(hl.get_monitors()) do
         local candidate = monitor.active_special_workspace or monitor.active_workspace
         if candidate and (not monitor_name or monitor.name == monitor_name)
-          and (not workspace_id or candidate.id == workspace_id) then
+          and (not workspace_id or workspace_key(candidate) == workspace_id) then
           workspace = candidate
           break
         end
       end
     end
-    if not workspace or (workspace_id and workspace.id ~= workspace_id)
+    if not workspace or (workspace_id and workspace_key(workspace) ~= workspace_id)
       or workspace.tiled_layout ~= "scrolling" then
       return { ok = false, error = "The displayed scrolling workspace changed" }
     end
@@ -413,9 +420,9 @@ function M.new(hl)
       end
     end
     if not selected then return { ok = false, error = "The selected window is no longer tiled here" } end
-    self.invalidate_workspace(workspace.id)
+    self.invalidate_workspace(workspace_key(workspace))
 
-    local s = current and current.id == workspace.id and self.snapshot() or nil
+    local s = current and workspace_key(current) == workspace_key(workspace) and self.snapshot() or nil
     local focus_changed = false
     local previous_offset
     if not s then
@@ -423,7 +430,7 @@ function M.new(hl)
       -- the camera's workspace, but native focus can move its camera. Keep the
       -- addressed view so the final fit uses what was visible before the click.
       -- Focus and the corrective pan finish in this same synchronous Lua call.
-      local before = self.snapshot(workspace.id, workspace.monitor.name)
+      local before = self.snapshot(workspace_key(workspace), workspace.monitor.name)
       previous_offset = before and before.offset
       local active = hl.get_active_window()
       focus_changed = not active or active.address ~= selected.address
@@ -589,20 +596,20 @@ function M.new(hl)
     local info = window.layout
     if not workspace or not workspace.monitor or workspace.tiled_layout ~= "scrolling" or not info
       or info.name ~= "scrolling" or not info.column
-      or not displayed_workspace(workspace.id, workspace.monitor.name) then return nil end
+      or not displayed_workspace(workspace_key(workspace), workspace.monitor.name) then return nil end
     return workspace
   end
 
   function self.prepare_fullscreen_exit(window)
     local workspace = fullscreen_exit_workspace(window)
-    if not workspace or (gesture and gesture.initial and gesture.initial.workspace_id == workspace.id) then return nil end
-    return {generation=generation(workspace.id), workspace_id=workspace.id, monitor_name=workspace.monitor.name, window=window}
+    if not workspace or (gesture and gesture.initial and gesture.initial.workspace_id == workspace_key(workspace)) then return nil end
+    return {generation=generation(workspace_key(workspace)), workspace_id=workspace_key(workspace), monitor_name=workspace.monitor.name, window=window}
   end
 
   function self.finish_fullscreen_exit(token)
     if not token or token.generation ~= generation(token.workspace_id) then return noop() end
     local workspace = fullscreen_exit_workspace(token.window)
-    if not workspace or workspace.id ~= token.workspace_id then return noop() end
+    if not workspace or workspace_key(workspace) ~= token.workspace_id then return noop() end
     return self.normalize(token.workspace_id, token.monitor_name)
   end
 
@@ -612,8 +619,8 @@ function M.new(hl)
   function self.prepare_close(window, previous)
     local workspace = window and window.workspace
     if not workspace or not workspace.monitor then return nil end
-    if gesture and gesture.initial and gesture.initial.workspace_id == workspace.id then return nil end
-    local s = self.snapshot(workspace.id, workspace.monitor.name)
+    if gesture and gesture.initial and gesture.initial.workspace_id == workspace_key(workspace) then return nil end
+    local s = self.snapshot(workspace_key(workspace), workspace.monitor.name)
     if not s then return nil end
     local removed
     for _, column in ipairs(s.columns) do
