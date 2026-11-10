@@ -34,7 +34,8 @@ struct Plan {
 
 // A background width change retains a visible focused column's position, or
 // the largest visible unchanged column when keyboard focus belongs elsewhere.
-// It never reveals an offscreen focus/resize target as an incidental action.
+// Resizing the focused visible column instead keeps its new width in view with
+// minimum camera movement. An offscreen target never causes navigation.
 inline Plan resizePlan(const std::vector<double>& widths, double viewport, double offset,
                        size_t source, double newWidth, std::optional<size_t> focused) {
     if (widths.empty() || source >= widths.size() || (focused && *focused >= widths.size()) ||
@@ -72,7 +73,15 @@ inline Plan resizePlan(const std::vector<double>& widths, double viewport, doubl
     const auto minimum = [&](double extent) { return extent < viewport ? std::round((extent - viewport) / 2) : 0.; };
     const double oldMin = minimum(total), oldMax = std::max(oldMin, total - viewport);
     const double newMin = minimum(newTotal), newMax = std::max(newMin, newTotal - viewport);
-    result.offset = std::clamp(result.offset, newMin + std::min(0., offset - oldMin), newMax + std::max(0., offset - oldMax));
+    const double allowedMin = newMin + std::min(0., offset - oldMin);
+    const double allowedMax = newMax + std::max(0., offset - oldMax);
+    result.offset = std::clamp(result.offset, allowedMin, allowedMax);
+    if (focused && *focused == source && overlap(source) > 0.5) {
+        const double low = starts[source] + newWidth - viewport, high = starts[source];
+        result.offset = low <= high ? std::clamp(result.offset, low, high)
+            : starts[source] + (newWidth - viewport) / 2;
+        result.offset = std::clamp(result.offset, allowedMin, allowedMax);
+    }
     result.anchorPreserved = !result.anchor || std::abs(result.offset - offset - anchorShift) < 0.5;
     return result;
 }

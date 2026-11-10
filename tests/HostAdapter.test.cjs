@@ -23,6 +23,33 @@ assert.equal(Geometry.measure(input).allocation,332);
 assert.equal(Host.findSlot(widget,bar,surface),self);
 assert.equal(Host.findSlot(widget,bar,foreign),null);
 
+// Input stacking must cross every wrapper inside our slot, but no boundary
+// outside it. Raising only the Loader fails after the host starts pooling it.
+const loader = {parent:self};
+widget.parent = loader;
+assert.equal(Host.pointerLayer(widget,bar,surface),loader,'legacy direct Loader');
+const area = {parent:self};
+const holder = {parent:area};
+const pooledHost = {parent:holder};
+loader.parent = pooledHost;
+assert.equal(Host.pointerLayer(widget,bar,surface),area,'pooled host slot branch');
+assert.equal(Host.pointerLayer(widget,bar,foreign),null,'no foreign surface mutation');
+pooledHost.parent = {parent:null};
+assert.equal(Host.pointerLayer(widget,bar,surface),null,'unplaced pool cannot lift the bar');
+pooledHost.parent = holder;
+assert.equal(Host.pointerLayer(widget,bar,surface),area,'reclaimed slot');
+assert.equal(Host.pointerLayer(widget,null,surface),null,'host not injected yet');
+
+const offscreenFullscreen = {ok:true,layout:'scrolling',monitorName:'DP-1',
+  workspaceHasFullscreen:false,columns:[{fullscreen:true},{fullscreen:false}]};
+assert.equal(Host.needsInputRepair(offscreenFullscreen,'DP-1'),true);
+assert.equal(Host.needsInputRepair(offscreenFullscreen,'DP-2'),false);
+for (const overrides of [{workspaceHasFullscreen:true},{workspaceHasFullscreen:undefined},
+  {workspaceHasFullscreen:null},{layout:'dwindle'},{ok:false},{columns:[]},{columns:[{fullscreen:false}]}]) {
+  assert.equal(Host.needsInputRepair({...offscreenFullscreen,...overrides},'DP-1'),false);
+}
+assert.equal(Host.needsInputRepair(null,'DP-1'),false);
+
 // Equal settings do not outrank actual per-entry identity (width may be dynamic).
 const originalSize = entries.left[2].size;
 entries.left[2].size = entries.left[0].size;

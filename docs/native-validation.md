@@ -1,8 +1,27 @@
 # Native validation
 
+## Current focused resize validation
+
+The Hyprland 0.57.1 build (`acc1aa0bfd4bd575dcb0f76c35ccf12b660a1ab9`)
+passes all **68 cases in the private two-output compositor**: the 62 existing
+cases and six focused-column width cases through both native and bar entry
+points. Growing a visible focused column to two-thirds or full width keeps it
+entirely in view with minimal camera movement; shrinking to half retains the
+camera when already fitting. Keyboard focus, focus-event count, pointer position
+and the other output remain unchanged. The deterministic planner suite also
+covers already-offscreen focused sources and background resizing.
+
+The private graphics parent used Aquamarine 0.16.0 with the same three
+test-only protocol bind clamps described below. It was confined to the child
+compositor's library path; no system transport library was changed. The default
+test suite separately passes 246 Qt input checks for each legacy/pooled host,
+21 input-mask lifecycle checks, and service snapshot-freshness checks. A fresh
+installed shell and matching native rebuild were also checked on the AI90;
+the user confirmed that the repaired interactions work.
+
 ## Fullscreen swipe validation — 2026-09-14
 
-The current bridge passed **62 behavioral cases in a private Hyprland with two headless outputs**: 54 existing camera, focus, close, reorder, width, and pointer cases plus these eight fullscreen cases. [Recorded results](fullscreen-results.json) include measured camera positions and the tested library hash.
+The September 14 bridge passed **62 behavioral cases in a private Hyprland with two headless outputs**: 54 existing camera, focus, close, reorder, width, and pointer cases plus these eight fullscreen cases. [Recorded results](fullscreen-results.json) include measured camera positions and the tested library hash.
 
 | Case | Checked behavior |
 |---|---|

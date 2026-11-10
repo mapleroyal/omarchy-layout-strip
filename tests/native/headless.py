@@ -270,6 +270,46 @@ def check_background_widths():
                         'hl.plugin.tape.resize_column('+json.dumps(address)+',0.667,'+context+')')
             width_action(expression,target,anchor,'reject_width_'+entrypoint+'_'+label,accepted=False)
 
+def check_focused_widths():
+    workspace,monitor=6,'HEADLESS-1'
+    target='widthc'
+    arguments=json.dumps(addr(target))+','+str(workspace)+','+json.dumps(monitor)
+    # Start with a half-width focused column against the viewport's right
+    # edge. Growing it must shift only the camera enough to show the new width;
+    # the subsequent shrink keeps the camera still. Both public entry points
+    # retain keyboard focus, focus-event count, cursor and the other monitor.
+    for entrypoint in ['bar','native']:
+        focus(target)
+        initial=geometry(target,workspace,monitor)
+        assert abs(initial['fraction']-.5)<.00001,initial
+        pan_to(initial['finish']-initial['width'],workspace,monitor)
+        time.sleep(.08)
+        for fraction in [.667,1,.5]:
+            before=width_state(target,target)
+            assert before['active']==addr(target),before
+            expression=('omarchy_tape_bar.cycle_width('+arguments+')' if entrypoint=='bar' else
+                        'hl.plugin.tape.resize_column('+json.dumps(addr(target))+','+str(fraction)+','+
+                        str(workspace)+','+json.dumps(monitor)+')')
+            result=reply(expression) if entrypoint=='bar' else {
+                'ok':evaluate('local r='+expression+'; return r.ok')=='true'}
+            time.sleep(.08)
+            after=width_state(target,target)
+            diagnostic={'case':'focused_width_'+entrypoint+'_'+str(fraction),'before':before,'after':after,'result':result}
+            assert result['ok'],diagnostic
+            for field in ['active','focusEvents','cursor','otherCamera']:
+                assert after[field]==before[field],(field,diagnostic)
+            geometry_after=after['target']
+            assert abs(geometry_after['fraction']-fraction)<.00001,diagnostic
+            assert geometry_after['start']>=geometry_after['offset']-.6,diagnostic
+            assert geometry_after['finish']<=geometry_after['offset']+geometry_after['width']+.6,diagnostic
+            expected=max(geometry_after['finish']-geometry_after['width'],
+                         min(before['camera']['offset'],geometry_after['start']))
+            assert abs(after['camera']['offset']-expected)<.6,diagnostic
+            # Native layout fit also keeps the actual client box on-screen.
+            assert after['anchorPosition'][0]>=0,diagnostic
+            assert after['anchorPosition'][0]+after['targetSize'][0]<=1440,diagnostic
+            cases.append(diagnostic)
+
 def check_bar_browse_pointer():
     workspace,monitor=6,'HEADLESS-1'
     # Keep the real default enabled for keyboard cursor warping. Bar browsing
@@ -733,6 +773,7 @@ try:
     cases.append({'case':'singleton_still_full_width','geometry':single,
                   'windowWidth':windows()['singleton']['size'][0]})
     check_background_widths()
+    check_focused_widths()
     check_bar_browse_pointer()
     check_fullscreen_swipes()
     if ARGS.cycle_bindings:

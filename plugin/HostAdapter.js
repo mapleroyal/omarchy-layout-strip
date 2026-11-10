@@ -103,6 +103,29 @@ function findSlot(root, bar, surface) {
   return null;
 }
 
+// The host's drag MouseArea is a sibling of the slot's widget branch. Older
+// bars put the Loader there directly; pooled hosts add several visual parents.
+// Lift only that branch, never the slot, section or another widget. Reading
+// each parent also lets QML rebind when the pool lends us to a different slot.
+function pointerLayer(root, bar, surface) {
+  var slot = findSlot(root, bar, surface);
+  if (!slot) return null;
+  var item = root;
+  while (item && item !== slot) {
+    if (item.parent === slot) return item;
+    item = item.parent;
+  }
+  return null;
+}
+
+function needsInputRepair(snapshot, monitorName) {
+  return !!snapshot && snapshot.ok === true && snapshot.monitorName === monitorName &&
+    snapshot.layout === "scrolling" && snapshot.workspaceHasFullscreen === false &&
+    Array.isArray(snapshot.columns) && snapshot.columns.some(function(column) {
+      return column.fullscreen === true;
+    });
+}
+
 function entryMatchScore(left, right) {
   if (left === undefined || right === undefined) return 0;
   if (left === right) return 2;
@@ -229,6 +252,8 @@ function appLibrary(bar) {
 
 if (typeof module !== "undefined") module.exports = {
   capabilities: capabilities, configuredEntries: configuredEntries, findSlot: findSlot,
+  pointerLayer: pointerLayer,
+  needsInputRepair: needsInputRepair,
   geometryInput: geometryInput, moveChoices: moveChoices, persistSetting: persistSetting,
   moveWidget: moveWidget, registerClickTarget: registerClickTarget,
   unregisterClickTarget: unregisterClickTarget, service: service, appLibrary: appLibrary,

@@ -1,5 +1,9 @@
 # Unreleased
 
+- Restore pointer input on pooled Omarchy bars by raising the widget's own slot branch above the bar drag handler; retain the legacy direct-Loader host.
+- Restore the strip's input region when an offscreen fullscreen column makes the visible bar click-through; retain normal fullscreen pass-through and host drag masks.
+- Keep a visible active column fully in view when right-click changes its width, while preserving background resize anchoring and keyboard focus.
+- Count mouse wheel notches when Qt supplies both angle and pixel deltas, while retaining fine-angle and pixel-only gesture accumulation.
 - Keep floating windows visible independently of saved Super+O restore state, with a floating marker and remembered strip placement.
 - Represent stacked columns with stable tile identities, last-focused app icons, member-count badges and a top-to-bottom app chooser.
 - Keep member focus and close actions addressed to individual windows while preserving whole-column sizing and dragging.

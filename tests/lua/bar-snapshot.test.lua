@@ -58,6 +58,18 @@ local function success(reply) assert(reply:find('"ok":true',1,true),reply) end
 
 local a,b,c=window(1,0),window(2,1),window(3,2)
 windows,active={a,b,c},b
+-- Only known compositor coverage can authorize input. A fullscreen client's
+-- retained flag is not evidence that its column is currently on screen.
+assert(not select(2,snapshot()):find('"workspaceHasFullscreen"',1,true))
+workspace.has_fullscreen=false
+a.fullscreen=2
+assert(select(2,snapshot()):find('"workspaceHasFullscreen":false',1,true))
+workspace.has_fullscreen=true
+assert(select(2,snapshot()):find('"workspaceHasFullscreen":true',1,true))
+workspace.has_fullscreen="false"
+assert(not select(2,snapshot()):find('"workspaceHasFullscreen"',1,true))
+workspace.has_fullscreen=nil
+a.fullscreen=0
 local initial=snapshot()
 local b_id=initial[2].columnId
 cycles[2]={stage=1,floating=false,layout={name="scrolling",column={index=1,width=0.5}}}

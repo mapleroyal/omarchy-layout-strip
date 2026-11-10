@@ -16,9 +16,22 @@ int main() {
     // Focus elsewhere uses the largest unchanged visible tile as an anchor.
     resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1000, 0, 1000, std::nullopt);
     near(resize.offset, 1500); assert(resize.anchor == 2 && resize.anchorPreserved);
-    // Resizing an already focused target is also background editing: no fit.
+    // A focused visible source fits its new width with minimum movement.
+    // The first case starts left-clipped; the second grows past the right edge.
     resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1100, 2, 1000, 2);
-    near(resize.offset, 1100);
+    near(resize.offset, 1000); assert(!resize.anchorPreserved);
+    resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1000, 3, 1000, 3);
+    near(resize.offset, 1500); assert(!resize.anchorPreserved);
+    // A fully fitting resize or shrink does not recenter the source.
+    resize = resizePlan({500, 500, 500, 500, 500}, 1000, 750, 2, 667, 2);
+    near(resize.offset, 750); assert(resize.anchorPreserved);
+    resize = resizePlan({500, 500, 1000, 500, 500}, 1000, 1000, 2, 500, 2);
+    near(resize.offset, 1000); assert(resize.anchorPreserved);
+    // Focused but fully offscreen columns remain background edits.
+    resize = resizePlan({500, 500, 500, 500, 500}, 1000, 1000, 0, 1000, 0);
+    near(resize.offset, 1500); assert(resize.anchor == 2 && resize.anchorPreserved);
+    resize = resizePlan({500, 500, 500, 500, 500}, 1000, 500, 4, 1000, 4);
+    near(resize.offset, 500); assert(resize.anchor == 1 && resize.anchorPreserved);
     // Shrinking the last column normalizes the right edge only as required.
     resize = resizePlan({500, 500, 1000}, 1000, 1000, 2, 500, 1);
     near(resize.offset, 500);

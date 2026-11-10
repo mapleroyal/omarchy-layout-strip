@@ -89,9 +89,12 @@ This local Hyprland plugin exposes the following functions to Lua:
   dragging is excluded, and floating/fullscreen focus needs no protection.
 - `hl.plugin.tape.resize_column(address, width, workspaceId, monitorName)` changes
   the addressed scrolling column's fraction without focusing any window or
-  moving the pointer. It keeps the visible focused column stationary where
-  possible; with focus elsewhere, it anchors the largest unchanged visible
-  column. Only the new tape bounds can limit that compensation. It uses public
+  moving the pointer. Resizing the visible focused column keeps its new width
+  in view with minimal camera movement. Background edits keep the visible
+  focused column stationary where possible; with focus elsewhere, they anchor
+  the largest unchanged visible column. An already-offscreen focused source
+  does not cause navigation. Only the new tape bounds can limit background
+  compensation. It uses public
   `SColumnData::setColumnWidth` and one native recalculation, and refuses stale
   context, real fullscreen, native dragging, and independent scroll inhibitors.
   The result includes `changed`, `width`, `anchorPreserved`, `offsetBefore`, and

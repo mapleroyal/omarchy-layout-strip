@@ -1,10 +1,21 @@
 # QML interaction tests
 
 Run `python3 tests/qml/run.py` from the repository. The runner creates a
-temporary configuration, uses Qt's offscreen software renderer, and clears
-the desktop display/compositor environment. It never opens a live preview or
+temporary configuration and private runtime directory, uses Qt's offscreen
+software renderer, and clears the desktop display/compositor environment
+(including inherited Wayland sockets). It never opens a live preview or
 moves the user's desktop viewport. Navigation is disabled, and settings writes
 are recorded by an in-memory Omarchy host fixture.
+
+The default run exercises the same suite twice: the older direct Loader host
+and the current pooled WidgetHost hierarchy, with the bar's left-button
+drag/click overlay as a sibling of the widget's slot branch. The fixture retains
+the host's registered-target click forwarding and drag threshold. This catches
+an input regression that a widget-only fixture misses: raising only the Loader
+no longer clears that overlay after the host adds holder and pool containers.
+Unplacing and reclaiming the widget also checks that the stacking override is
+released and reacquired, and that a real left click still reaches its tile.
+Use `--host legacy` or `--host pooled` to run one host in isolation.
 
 The suite sends real QtTest mouse moves, button presses/releases, and wheel
 events to the actual plugin and its visual components. It currently checks
@@ -20,6 +31,9 @@ Tile wheel coverage checks forward/reverse Super+O actions, addressed context,
 fine wheel and trackpad accumulation, inverted mouse delivery, and suppression
 during busy actions, resizing, or a held mouse button. Horizontal tile scrolling
 and vertical arrow scrolling continue to browse strip overflow.
+The captured Wayland mouse event with both 120 angle units and 15 pixel units
+must perform one cycle; fine hybrid angles still accumulate, while pixel-only
+gestures retain their threshold and overflow scrolling remains continuous.
 Shrinking a tile keeps the stationary pointer's cycle on its original address;
 moving the pointer selects a new target.
 Drag/drop coverage also checks that both insertion boundaries around every
@@ -35,6 +49,7 @@ same window when it floats out of its original stack.
 
 Use `python3 tests/qml/run.py --screenshots /path/to/work/screenshots` for 1x and
 2x renders of the 26-pixel strip in both appearance modes and the member menu.
+When both hosts run, their captures are kept in separate host subdirectories.
 
 Only the Wayland-specific container is substituted: `KeyboardPanel.qml`
 preserves the host's open/close coordinator contract in an offscreen QtQuick

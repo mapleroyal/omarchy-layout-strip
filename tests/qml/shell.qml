@@ -15,6 +15,7 @@ ShellRoot {
   property var leftArrow: null
   property var writes: []
   property int hostPresses: 0
+  property bool hostPlaced: true
   property int priorRounding: 0
   property real priorCenter: 0
   property real priorWidth: 0
@@ -23,6 +24,7 @@ ShellRoot {
   property var requestedCommands: []
   property var movedWidget: null
   readonly property bool capturePopup: Quickshell.env("STRIP_TEST_POPUP")==="1"
+  readonly property bool pooledHost: Quickshell.env("STRIP_TEST_HOST")==="pooled"
   readonly property var widget: loader.item
 
   function check(condition, name) {
@@ -101,7 +103,7 @@ ShellRoot {
   }
   function finish() {
     Style.cornerRadius=priorRounding;
-    console.log("STRIP_INPUT_RESULTS",JSON.stringify({checks:checks,failures:failures}));
+    console.log("STRIP_INPUT_RESULTS",JSON.stringify({host:pooledHost?"pooled":"legacy",checks:checks,failures:failures}));
     test.stop();
     Qt.quit();
   }
@@ -144,6 +146,24 @@ ShellRoot {
     function targetBelongsToWindow(item, window) { return true; }
     function showTooltip(item, text) {}
     function hideTooltip(item) {}
+    function moduleTargetClickable(target) {
+      return target && target.visible !== false && target.opacity !== 0 &&
+        target.interactive !== false && target.pressable !== false &&
+        target.concealed !== true && typeof target.triggerPress === "function";
+    }
+    function moduleClickTargetAt(slot, x, y) {
+      for (var i=clickTargets.length-1; i>=0; i--) {
+        var target=clickTargets[i];
+        if (moduleTargetClickable(target) && Util.itemContainsPoint(target,slot,x,y)) return target;
+      }
+      return moduleTargetClickable(slot.activeItem) ? slot.activeItem : null;
+    }
+    function pressModuleClickTarget(slot, button, x, y) {
+      var target=moduleClickTargetAt(slot,x,y);
+      if (!target) return false;
+      target.triggerPress(button);
+      return true;
+    }
     function requestPopout(item) {
       if(activePopout===item) return;
       if(activePopout) {
@@ -169,23 +189,85 @@ ShellRoot {
       Rectangle { anchors.fill:parent; color:Color.bar.background; z:-100 }
       Item { id:leftSlot; x:8; width:10; height:26; property string moduleName:"left"; property string region:"left"; property var activeItem:leftSlot }
       Item { id:centerSlot; x:panel.width/2-10; width:20; height:26; property string moduleName:"clock"; property string region:"center"; property var activeItem:centerSlot }
+      Item { id:parkingPool; visible:false; width:220; height:26 }
       Item {
         id: hostSlot
         x:18; y:15
         property string moduleName: "user1.layout-strip"
         property string region: "left"
+        property var entry: ({id:moduleName})
         property var activeItem: loader.item
+        readonly property Item widgetRoom: widgetArea
+        readonly property Item widgetHolder: holder
         width:widget ? widget.implicitWidth : 0
         height:26
         Rectangle { anchors.fill: parent; z: -100; color: Color.bar.background }
         Loader {
           id: loader
+          parent: harness.pooledHost ? widgetHost : (harness.hostPlaced ? hostSlot : parkingPool)
           anchors.fill: parent
           sourceComponent: LayoutStrip.BarWidget { backendEnabled:false }
           onLoaded: { item.bar=fakeBar; item.measureGap(); item.applySnapshot(harness.snapshot(12,0,1)); }
         }
-        // Match the packaged bar's later-declared drag/click MouseArea.
-        MouseArea { anchors.fill:parent; onPressed:harness.hostPresses++ }
+        // The current host lends its stable WidgetHost to a slot's holder;
+        // older bars put the Loader directly in the slot. Keep the overlay a
+        // slot sibling in both cases, matching the real pointer stacking.
+        Item {
+          id: widgetArea
+          anchors.fill: parent
+          visible: harness.pooledHost
+          Item {
+            id: holder
+            anchors.fill: parent
+            Item {
+              id: widgetHost
+              parent: harness.hostPlaced ? holder : parkingPool
+              anchors.fill: parent
+            }
+          }
+        }
+        MouseArea {
+          id: modulePointer
+          anchors.fill:parent
+          acceptedButtons:Qt.LeftButton
+          propagateComposedEvents:true
+          property bool dragging:false
+          property bool suppressClick:false
+          property var heldTarget:null
+          property real pressedX:0
+          property real pressedY:0
+          function hold(target,button) {
+            if(heldTarget && heldTarget!==target && "heldButtons" in heldTarget) heldTarget.heldButtons=Qt.NoButton;
+            heldTarget=target && "heldButtons" in target ? target : null;
+            if(heldTarget) heldTarget.heldButtons=button;
+          }
+          onPressed:function(mouse) {
+            harness.hostPresses++;
+            dragging=false;
+            suppressClick=false;
+            pressedX=mouse.x;
+            pressedY=mouse.y;
+            hold(fakeBar.moduleClickTargetAt(hostSlot,mouse.x,mouse.y),mouse.button);
+          }
+          onPositionChanged:function(mouse) {
+            if(!(mouse.buttons & Qt.LeftButton)) return;
+            if(Math.abs(mouse.x-pressedX)+Math.abs(mouse.y-pressedY)>=Style.space(4)) {
+              dragging=true;
+              hold(null);
+            }
+          }
+          onReleased:function(mouse) {
+            hold(null);
+            suppressClick=dragging;
+            dragging=false;
+            mouse.accepted=suppressClick;
+          }
+          onCanceled:{ dragging=false; suppressClick=false; hold(null); }
+          onClicked:function(mouse) {
+            if(suppressClick) { suppressClick=false; mouse.accepted=true; return; }
+            if(!fakeBar.pressModuleClickTarget(hostSlot,mouse.button,mouse.x,mouse.y)) mouse.accepted=false;
+          }
+        }
       }
       TestEvent { id: events }
     }
@@ -230,7 +312,7 @@ ShellRoot {
             return lines.length===1 && closeEnough(lines[0].width,widget.iconSize*factor) && closeEnough(lines[0].x,(tile.width-lines[0].width)/2);
           }),"Underlines are centered at exact 1:1.5:2 widths");
           check(fakeBar.clickTargets.indexOf(rightArrow)>=0 && fakeBar.clickTargets.indexOf(leftArrow)>=0,"Arrows register after delayed bar injection");
-          check(loader.z>0,"Widget rises above bar host pointer area");
+          check((pooledHost ? widgetArea.z : loader.z)>modulePointer.z,"Widget rises above bar host pointer area");
           check(closeEnough(widget.scrollOffset,0),"First focused column initially visible");
           widget.setOffset(-500,false);
           check(closeEnough(widget.scrollOffset,0),"Negative scrolling clamps to start");
@@ -424,6 +506,28 @@ ShellRoot {
           wheelEvent.buttons=Qt.LeftButton;
           widget.tileWheel(first.modelData,wheelEvent);
           check(requestedCommands.length===5,"Busy, resize, and held-button wheel input cannot cycle a window");
+          requestedCommands=[];
+          wheelEvent={pixelDelta:{x:0,y:-15},angleDelta:{x:0,y:-120},inverted:false,buttons:0,accepted:false};
+          widget.clearWheelAnchor();
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===1 && widget.lastCommand[8]==="1",
+            "Captured Wayland mouse notch with both pixel and angle deltas advances once");
+          wheelEvent.pixelDelta.y=15; wheelEvent.angleDelta.y=120;
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===2 && widget.lastCommand[8]==="-1",
+            "Hybrid wheel notch reverses once without waiting for pixel accumulation");
+          wheelEvent.inverted=true;
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===3 && widget.lastCommand[8]==="1",
+            "Hybrid mouse notch respects inverted delivery");
+          wheelEvent.inverted=false; wheelEvent.pixelDelta.y=-5; wheelEvent.angleDelta.y=-40;
+          widget.clearWheelAnchor();
+          widget.tileWheel(first.modelData,wheelEvent);
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===3,"Fine hybrid wheel events retain angle accumulation");
+          widget.tileWheel(first.modelData,wheelEvent);
+          check(requestedCommands.length===4 && widget.lastCommand[8]==="1",
+            "Fine hybrid wheel angles complete one notch");
           var strip=named("layoutStrip");
           check(events.mouseClick(strip,widget.endSpace+2,strip.height/2,Qt.RightButton,Qt.NoModifier,1),"Right-click blank padding delivered");
           check(widget.menuOpen && widget.menuKind==="general" && widget.menuItems.length===6,"Blank padding opens general settings");
@@ -942,6 +1046,22 @@ ShellRoot {
           widget.beginDrag(widget.columns[0],Qt.point(widget.stripWidth-2,widget.barSize/2));
           check(widget.dragWorkspace==="special:qconsole", "Drag retains special workspace identity");
           widget.cancelDrag();
+          harness.hostPlaced=false;
+          break;
+        case 55:
+          check(widget.pointerLayer===null,"An unplaced widget releases its pointer layer");
+          check((pooledHost ? widgetArea.z : loader.z)===0,"Unplacing restores the previous host branch stacking");
+          harness.hostPlaced=true;
+          break;
+        case 56:
+          check(widget.pointerLayer===(pooledHost ? widgetArea : loader),"Reclaiming a widget finds its current slot branch");
+          check((pooledHost ? widgetArea.z : loader.z)>modulePointer.z,"Reclaiming restores input above the host overlay");
+          requestedCommands=[];
+          priorTile=tileFor("0x1");
+          events.mousePress(priorTile,Style.space(8),priorTile.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          events.mouseRelease(priorTile,Style.space(8),priorTile.height/2,Qt.LeftButton,Qt.NoModifier,1);
+          check(requestedCommands.length===1 && widget.lastCommand[1]==="focus" && hostPresses===0,
+            "Real left click remains addressed and bypasses host dragging after reclaim");
           finish();
           break;
         }

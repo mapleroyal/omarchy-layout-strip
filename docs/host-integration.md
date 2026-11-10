@@ -13,6 +13,7 @@ rest of the plugin consumes its functions and the pure `Geometry.measure(input)`
 | Capability | Host surface | Behavior if unavailable |
 | --- | --- | --- |
 | Bar allocation | Legacy `moduleSlots` or current-surface visual slots, `layoutEntries` or `layoutConfig`, `centerAnchor` or `bar.shell.barConfig.centerAnchor`, slot `entry`/`activeItem`/width/visibility, window ownership helper | Explicit compatibility error; no whole-bar allocation when slots are unavailable |
+| Pointer input | The widget's visual branch directly inside its own current-surface slot | No stacking change until the host places the widget |
 | Settings | `bar.shell.updateEntryInline(id, entry)` | A failed result with an explanatory message |
 | Placement | Legacy `bar.dropBarModule(slot, region, beforeId)` or `omarchy bar move` through `bar.run` | A failed result; CLI dispatch is asynchronous and its file watcher applies the move |
 | Bar hidden state | Legacy `bar.barHidden` or `bar.shell.bar.barHidden` | Treat the bar as visible |
@@ -35,6 +36,27 @@ widget internals and the strip's own width cannot create geometry feedback.
 Child lists, loading, widths, visibility and detached bar configuration remain
 QML binding dependencies. Operations continue through the scoped facade; the
 adapter does not recover the host Bar or other plugins' services.
+
+Newer bars pool widgets in a `WidgetHost` beneath several visual wrappers. The
+slot's drag handler sits above that whole branch, so raising only the widget's
+immediate Loader no longer gives it pointer input. `HostAdapter.pointerLayer`
+finds the branch directly inside the widget's own slot; a reversible QML binding
+raises that branch above the host handler. It follows visual reparenting and
+does not change the slot, other widgets, or package-owned code. The older direct
+Loader hierarchy uses the same adapter. `debug` reports `pointerLayerReady` for
+each monitor so a healthy backend cannot be mistaken for working input routing.
+
+The current shell also empties the bar's input mask whenever any window in the
+workspace is fullscreen, including a fullscreen scrolling column outside the
+viewport. In that case the bar remains visible but clicks reach windows below.
+The shared Lua snapshot reads the compositor's covering `workspace.has_fullscreen`
+state. When it explicitly reports false for the displayed scrolling workspace,
+`StripInputMask` temporarily lends the strip's rectangle to the host's otherwise
+empty mask. It leaves normal/custom masks and the host's full-surface drag mask
+alone. Visible or unknown fullscreen, stale state, navigation invalidation and
+teardown restore the original region. The repair is limited to Layout Strip;
+it does not change fullscreen modes or other widgets. `inputMaskRepaired` and
+`workspaceHasFullscreen` expose this distinction in each monitor's diagnostics.
 
 Geometry pairs each configured entry with one unused slot on the same bar
 surface. It prefers actual entry identity, then equal entry values when QML has

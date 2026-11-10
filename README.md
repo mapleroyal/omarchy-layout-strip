@@ -23,7 +23,8 @@ position—which columns are visible—not a thumbnail or recording device.
 - Click an icon to focus its window, scrolling only as far as needed to bring
   its column into view. Right-click an icon to cycle its column's width through
   half, two-thirds, full, then half again, keeping keyboard focus and the pointer
-  in place. Middle-click an icon to
+  in place. A visible active column stays fully in view as it grows or shrinks;
+  resizing a background column preserves the visible layout. Middle-click an icon to
   close its window without first focusing it; apps can show their usual unsaved-work prompt.
 - Drag an icon to reorder whole columns; release outside or right-click during
   the drag to cancel. Hovering near the strip ends scrolls only the strip.
@@ -88,7 +89,7 @@ Python 3 for installation/tools, and the matching Hyprland/Lua development heade
 GCC-compatible C++26 compiler and pkg-config for the native bridge.
 
 The current native source targets Hyprland 0.57.1. This port is tested against
-Omarchy edge `4.0.0.r7634.gcbd0029-1`, Quickshell `0.3.2.r7.g2b4501a-7` and
+Omarchy edge `4.0.0.r7636.gb99593e-1`, Quickshell `0.3.2.r7.g2b4501a-7` and
 Qt 6.12. The Lua and widget adapters retain the older numeric workspace and
 three-section bar interfaces; older native headers require the matching earlier
 source revision rather than this native build.

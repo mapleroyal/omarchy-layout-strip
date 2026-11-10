@@ -33,6 +33,8 @@ BarWidget {
   property string actionError: ""
   property string queryError: ""
   property bool backendStale: false
+  property bool inputStateValid: false
+  property var inputSnapshot: null
   property bool actionBusy: false
   property var pendingFocus: null
   property var registeredBackend: null
@@ -64,6 +66,8 @@ BarWidget {
   property int scrollDirection: 0
   property double lastFrame: 0
   property string wheelCycleTarget: ""
+  property int wheelEvents: 0
+  property var lastWheel: null
   property real wheelCycleDelta: 0
   property bool wheelCyclePixels: false
   property double wheelCycleTime: 0
@@ -109,7 +113,16 @@ BarWidget {
 
   // App dragging and resizing own pointer input. Widget placement is offered
   // explicitly in the menu through the host's normal persistent move API.
-  Binding { target: root.parent; property: "z"; value: 1; when: root.parent !== null }
+  readonly property Item pointerLayer: HostAdapter.pointerLayer(root, bar, surface)
+  Binding { id: pointerStack; target: root.pointerLayer; property: "z"; value: 1; when: root.pointerLayer !== null }
+  StripInputMask {
+    id: inputMask
+    surface: root.surface
+    stripItem: strip
+    enabled: root.backendEnabled && root.inputStateValid && !root.backendStale &&
+      !root.barHidden && root.visible && !!root.pointerLayer &&
+      HostAdapter.needsInputRepair(root.inputSnapshot, root.monitorName)
+  }
 
   function tileWidth(column) {
     var factor = Model.sizeFactor(column.size);
@@ -215,8 +228,14 @@ BarWidget {
     });
   }
 
-  function onBackendSnapshot(data) { applySnapshot(data); }
+  function invalidateInputState() { inputStateValid = false; }
+  function onBackendSnapshot(data, inputFresh) {
+    inputSnapshot = data;
+    inputStateValid = inputFresh === true;
+    applySnapshot(data);
+  }
   function onBackendError(error) {
+    invalidateInputState();
     queryError = String(error || "Layout data is unavailable");
     backendStale = true;
     if (menuKind === "stack") close();
@@ -284,7 +303,11 @@ BarWidget {
   }
 
   function tileWheel(column, event) {
-    var pixels = !!(event.pixelDelta.x || event.pixelDelta.y);
+    // Discrete window actions use wheel angles whenever supplied. Qt Wayland
+    // can send both 120 angle units and a synthetic 15-pixel delta for one
+    // mouse notch; treating that as a trackpad never reaches our threshold.
+    var pixels = !(event.angleDelta.x || event.angleDelta.y) &&
+      !!(event.pixelDelta.x || event.pixelDelta.y);
     var horizontal = pixels ? Math.abs(event.pixelDelta.x) > Math.abs(event.pixelDelta.y)
       : Math.abs(event.angleDelta.x) > Math.abs(event.angleDelta.y);
     if (horizontal) {
@@ -297,7 +320,7 @@ BarWidget {
       wheelCycleDelta = 0;
       return;
     }
-    var delta = Model.wheelStep(event.pixelDelta.x, event.pixelDelta.y,
+    var delta = Model.wheelStep(pixels ? event.pixelDelta.x : 0, pixels ? event.pixelDelta.y : 0,
       event.angleDelta.x, event.angleDelta.y, event.inverted, !pixels, 120);
     if (!delta) return;
     var target = String(snapshot.workspaceId) + ":" + column.address;
@@ -457,6 +480,10 @@ BarWidget {
   }
 
   function wheel(event, source, column) {
+    wheelEvents++;
+    lastWheel = {angleX:event.angleDelta.x,angleY:event.angleDelta.y,
+      pixelX:event.pixelDelta.x,pixelY:event.pixelDelta.y,buttons:event.buttons,
+      address:column ? column.address : "",busy:operationBusy,stale:backendStale};
     var pixels = !!(event.pixelDelta.x || event.pixelDelta.y);
     var horizontal = pixels ? Math.abs(event.pixelDelta.x) > Math.abs(event.pixelDelta.y)
       : Math.abs(event.angleDelta.x) > Math.abs(event.angleDelta.y);
@@ -614,13 +641,21 @@ BarWidget {
 
   function debugState() {
     return JSON.stringify({gap: geometryGap, width: stripWidth, viewport: viewportWidth,
+      hovered:stripHover.hovered,
+      wheelEvents:wheelEvents,lastWheel:lastWheel,
       naturalWidth: naturalWidth, offset: scrollOffset, overflow: overflow, mode: arrowMode, indicationMode: indicationMode,
       menuOpen: menuOpen, menuKind: menuKind, dragging: dragging, resizing: resizing,
+      pointerLayerReady: !!pointerLayer && pointerLayer.z > 0,
+      inputMaskRepaired: inputMask.repairActive, inputStateValid: inputStateValid,
+      workspaceHasFullscreen: inputSnapshot ? inputSnapshot.workspaceHasFullscreen : undefined,
       allocation: placement, protectedRegion: protectedRegion(), widthRatio: setting("widthRatio", 0.85), canReorder: canReorder, actionError: actionError, queryError: queryError, stale: backendStale, busy: operationBusy, monitorName: monitorName, workspaceId: snapshot.workspaceId || 0, backendProtocolVersion: snapshot.protocolVersion || 0, nativeProtocolVersion: snapshot.nativeProtocolVersion || 0, nativeCapabilities: snapshot.capabilities || {}, capabilities: hostCapabilities, lastCommand: lastCommand, columns: columns});
   }
 
   Component.onCompleted: { measureGap(); syncBackend(); requestRefresh(); }
-  Component.onDestruction: if (registeredBackend) registeredBackend.unregisterWidget(root)
+  Component.onDestruction: {
+    pointerStack.when = false;
+    if (registeredBackend) registeredBackend.unregisterWidget(root);
+  }
   onBackendServiceChanged: Qt.callLater(syncBackend)
   onBackendEnabledChanged: Qt.callLater(syncBackend)
   onVisibleChanged: { Qt.callLater(syncBackend); requestRefresh(); }

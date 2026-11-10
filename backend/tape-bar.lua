@@ -152,6 +152,13 @@ function M.new(hl, tape, finish_navigation)
       layout = workspace and workspace.tiled_layout or "",
       activeAddress = active and active.address or "",
     }
+    -- Unlike a client's fullscreen flag, this compositor-owned workspace
+    -- state only counts a fullscreen column currently covering its viewport.
+    -- Older compositors may omit it; unknown must never mean safe for input.
+    local workspace_has_fullscreen = workspace and workspace.has_fullscreen
+    if type(workspace_has_fullscreen) == "boolean" then
+      result.workspaceHasFullscreen = workspace_has_fullscreen
+    end
     -- Only the live widget supplies a region. Plain snapshots stay read-only;
     -- this short-lived registration prevents the compositor's mouse-release
     -- handler from fitting the old focused window before the bar action runs.

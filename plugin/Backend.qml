@@ -23,6 +23,7 @@ Item {
   property int stateRequests: 0
   property int leaseRequests: 0
   property int actionRequests: 0
+  property int inputGeneration: 0
   readonly property bool hasVisibleWidgets: widgets.some(isActive)
 
   function isActive(widget) {
@@ -32,6 +33,7 @@ Item {
   function registered(widget) { return widget && widgets.indexOf(widget) !== -1; }
   function registerWidget(widget) {
     if (!widget || registered(widget)) return;
+    if (typeof widget.invalidateInputState === "function") widget.invalidateInputState();
     widgets = widgets.concat([widget]);
     requestRefresh(widget);
     updateRegion(widget);
@@ -46,6 +48,23 @@ Item {
     refreshPending = true;
     if (!refreshSoon.running) refreshSoon.start(); // throttle; title streams cannot starve refreshes
   }
+  function invalidateInputState() {
+    inputGeneration++;
+    widgets.forEach(function(widget) {
+      if (widget && typeof widget.invalidateInputState === "function") widget.invalidateInputState();
+    });
+  }
+  function handleEvent(event) {
+    var name = String(event && event.name || "");
+    if (/^windowtitle/.test(name)) {
+      requestRefresh(null);
+    } else if (/^(activewindow|openwindow|closewindow|movewindow|workspace|focusedmon|monitor|activespecial|fullscreen|changefloatingmode|configreloaded|togglegroup|moveintogroup|moveoutofgroup|custom)/.test(name)) {
+      // Drop a temporary input-mask repair before waiting for fresh geometry.
+      // A reply already in flight must not re-authorize the previous viewport.
+      invalidateInputState();
+      requestRefresh(null);
+    }
+  }
   function updateRegion(widget) {
     if (!enabled) return;
     regionPending = true;
@@ -58,7 +77,7 @@ Item {
       records.push({widget:widget,monitor:widget.monitorName,epoch:widget.stateEpoch});
       if (monitors.indexOf(widget.monitorName) < 0) monitors.push(widget.monitorName);
     });
-    return {records:records,monitors:monitors};
+    return {records:records,monitors:monitors,inputGeneration:inputGeneration};
   }
   function current(record) {
     return enabled && registered(record.widget) && isActive(record.widget) && record.widget.monitorName === record.monitor &&
@@ -102,6 +121,21 @@ Item {
     backendError = reason;
     ctx.records.forEach(function(record) { if (current(record)) record.widget.onBackendError(reason); });
   }
+  function applySnapshots(ctx, snapshots) {
+    if (!Array.isArray(snapshots)) throw new Error("Layout backend returned invalid monitor snapshots");
+    var byMonitor = {};
+    snapshots.forEach(function(snapshot) { byMonitor[snapshot.monitorName] = snapshot; });
+    backendError = "";
+    lastSuccess = Date.now();
+    ctx.records.forEach(function(record) {
+      if (!root.current(record)) return;
+      var snapshot = byMonitor[record.monitor];
+      if (!snapshot || snapshot.ok !== true || !Array.isArray(snapshot.columns))
+        record.widget.onBackendError(snapshot && snapshot.error || "The monitor snapshot is unavailable");
+      else record.widget.onBackendSnapshot(snapshot, ctx.inputGeneration === root.inputGeneration);
+    });
+    if (ctx.inputGeneration !== inputGeneration) requestRefresh(null);
+  }
   function completeRequest(request, result) {
     var widget = request && request.widget;
     if (registered(widget) && widget.stateEpoch === request.epoch) widget.onBackendActionFinished(result);
@@ -130,6 +164,7 @@ Item {
       return false;
     }
     busy = true;
+    invalidateInputState();
     actionRequests++;
     if (!actionRpc.start(action.command, request)) {
       busy = false;
@@ -155,15 +190,20 @@ Item {
       requests:{state:stateRequests,regions:leaseRequests,actions:actionRequests},
       instances:widgets.filter(function(w){return !!w;}).map(function(w){return JSON.parse(w.debugState());})};
   }
-  onHasVisibleWidgetsChanged: { requestRefresh(null); updateRegion(null); }
-  onEnabledChanged: if (!enabled) clearRegions()
+  onHasVisibleWidgetsChanged: {
+    // Raw events are disconnected while every widget is hidden. A reveal
+    // must wait for fresh state, even if the pre-hide read completes later.
+    invalidateInputState();
+    requestRefresh(null);
+    updateRegion(null);
+  }
+  onEnabledChanged: if (!enabled) { invalidateInputState(); clearRegions(); }
   Component.onDestruction: clearRegions()
   Connections {
     target: Hyprland
     enabled: root.enabled && root.hasVisibleWidgets
     function onRawEvent(event) {
-      if (/^(activewindow|openwindow|closewindow|movewindow|workspace|focusedmon|monitor|activespecial|fullscreen|changefloatingmode|configreloaded|windowtitle|togglegroup|moveintogroup|moveoutofgroup|custom)/.test(event.name))
-        root.requestRefresh(null);
+      root.handleEvent(event);
     }
   }
   Timer { id: refreshSoon; interval: 45; onTriggered: root.flushRefresh() }
@@ -177,18 +217,7 @@ Item {
         if (code || error) throw new Error(error || "Could not read the layout backend");
         var data = Protocol.reply(output);
         if (!data.ok) throw new Error(data.error || "Layout backend unavailable");
-        if (!Array.isArray(data.snapshots)) throw new Error("Layout backend returned invalid monitor snapshots");
-        var byMonitor = {};
-        data.snapshots.forEach(function(snapshot) { byMonitor[snapshot.monitorName] = snapshot; });
-        root.backendError = "";
-        root.lastSuccess = Date.now();
-        ctx.records.forEach(function(record) {
-          if (!root.current(record)) return;
-          var snapshot = byMonitor[record.monitor];
-          if (!snapshot || snapshot.ok !== true || !Array.isArray(snapshot.columns))
-            record.widget.onBackendError(snapshot && snapshot.error || "The monitor snapshot is unavailable");
-          else record.widget.onBackendSnapshot(snapshot);
-        });
+        root.applySnapshots(ctx, data.snapshots);
       } catch (failure) { root.notifyError(ctx, String(failure.message || failure)); }
       if (root.refreshPending) refreshSoon.restart();
     }
